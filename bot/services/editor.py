@@ -25,6 +25,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..utils.ffmpeg import hw_decode_args, probe
@@ -125,6 +126,9 @@ def _build_command(
         cmd += ["-af", af, "-c:a", "aac", "-b:a", "128k"]
     else:
         cmd += ["-an"]
+    # Fresh "now" timestamp so the phone's gallery sorts the saved clip to the
+    # very top (most recent) — and so each render looks brand new.
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     cmd += [
         # software H.264 encode — reliable on Pi 5, good for short social clips
         "-c:v", "libx264",
@@ -134,6 +138,7 @@ def _build_command(
         "-movflags", "+faststart",
         "-map_metadata", "-1",          # strip ALL source metadata
         "-metadata", f"comment=v{random.randint(1000, 9999)}",  # fresh tag
+        "-metadata", f"creation_time={now_iso}",  # appears first in gallery
         str(dst),
     ]
     return cmd
