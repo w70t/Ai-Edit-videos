@@ -122,23 +122,30 @@ def _build_command(
     ]
     # Apply audio filters / re-encode only when the source actually has audio
     # (video notes, GIFs and some clips don't) — otherwise drop audio with -an.
+    # Force standard stereo 44.1kHz AAC-LC: iOS Photos rejects odd sample rates.
     if has_audio:
-        cmd += ["-af", af, "-c:a", "aac", "-b:a", "128k"]
+        cmd += ["-af", af, "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
     else:
         cmd += ["-an"]
     # Fresh "now" timestamp so the phone's gallery sorts the saved clip to the
     # very top (most recent) — and so each render looks brand new.
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     cmd += [
-        # software H.264 encode — reliable on Pi 5, good for short social clips
+        # software H.264 encode — reliable on Pi 5, good for short social clips.
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "23",
+        # Explicit iOS-friendly profile/level (broad device compatibility).
+        "-profile:v", "high",
+        "-level", "4.0",
         "-pix_fmt", "yuv420p",
+        # Force a CONSTANT frame rate. Social clips are often VFR, and iOS Photos
+        # refuses to import VFR video even when Telegram shows the save option.
+        "-fps_mode", "cfr",
         "-movflags", "+faststart",
         "-map_metadata", "-1",          # strip ALL source metadata
         "-metadata", f"comment=v{random.randint(1000, 9999)}",  # fresh tag
-        "-metadata", f"creation_time={now_iso}",  # appears first in gallery
+        "-metadata", f"creation_time={now_iso}",  # required by iOS Photos import
         str(dst),
     ]
     return cmd
