@@ -1,0 +1,77 @@
+"""
+Application entrypoint.
+
+  python -m bot.main
+
+Wires together config, the job queue, the background temp sweeper, and the
+aiogram dispatcher, then long-polls Telegram. Dependencies (bot, queue) are
+injected into every handler via the dispatcher's workflow data.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+
+from .config import settings
+from .handlers import build_router
+from .services.queue import JobQueue
+from .utils.cleanup import periodic_sweep
+from .utils.ffmpeg import ffmpeg_available, has_v4l2_decoder
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+)
+log = logging.getLogger("bot")
+
+
+async def main() -> None:
+    settings.validate()
+    settings.ensure_dirs()
+
+    if not ffmpeg_available():
+        raise SystemExit("FFmpeg/ffprobe not found. Install with: sudo apt install -y ffmpeg")
+
+    log.info("admin id: %s", settings.admin_id)
+    log.info("work dir: %s | save dir: %s", settings.work_dir, settings.save_dir)
+    log.info("hw accel: %s (v4l2 decoder present: %s)",
+             settings.hw_accel, has_v4l2_decoder())
+
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=None),
+    )
+
+    # Job queue: caps concurrent FFmpeg renders.
+    queue = JobQueue(concurrency=settings.max_concurrent_jobs)
+    queue.start()
+
+    # Background temp sweeper.
+    sweeper = asyncio.create_task(periodic_sweep(settings.work_dir))
+
+    # Dispatcher with injected dependencies (available as handler kwargs).
+    dp = Dispatcher()
+    dp["queue"] = queue
+    dp.include_router(build_router())
+
+    try:
+        # Drop any backlog accumulated while the bot was offline.
+        await bot.delete_webhook(drop_pending_updates=True)
+        log.info("bot is up — polling for updates")
+        await dp.start_polling(bot, queue=queue)
+    finally:
+        sweeper.cancel()
+        await queue.stop()
+        await bot.session.close()
+        log.info("shutdown complete")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass

@@ -1,0 +1,72 @@
+"""
+Central configuration, loaded once from the environment / .env file.
+
+Keeping everything in a single frozen dataclass means the rest of the code
+imports `settings` and never touches os.environ directly — easy to test and
+reason about.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env that sits next to the project root (one level up from this file).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+
+def _int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
+@dataclass(frozen=True)
+class Settings:
+    # --- Telegram ---
+    bot_token: str = os.getenv("BOT_TOKEN", "").strip()
+    admin_id: int = _int("ADMIN_ID", 0)
+    forward_channel_id: str = os.getenv("FORWARD_CHANNEL_ID", "").strip()
+
+    # --- Research ---
+    tavily_api_key: str = os.getenv("TAVILY_API_KEY", "").strip()
+
+    # --- Processing limits ---
+    max_concurrent_jobs: int = _int("MAX_CONCURRENT_JOBS", 1)
+    max_video_mb: int = _int("MAX_VIDEO_MB", 300)
+    default_intensity: str = os.getenv("DEFAULT_INTENSITY", "medium").strip().lower()
+
+    # --- Hardware ---
+    hw_accel: str = os.getenv("HW_ACCEL", "auto").strip().lower()
+
+    # --- Storage ---
+    work_dir: Path = field(default_factory=lambda: Path(
+        os.getenv("WORK_DIR", "/tmp/ai-edit-videos")).expanduser())
+    save_dir: Path = field(default_factory=lambda: Path(
+        os.getenv("SAVE_DIR", "./saved")).expanduser())
+
+    def validate(self) -> None:
+        """Fail fast with a clear message if the bot can't possibly run."""
+        problems = []
+        if not self.bot_token:
+            problems.append("BOT_TOKEN is missing")
+        if not self.admin_id:
+            problems.append("ADMIN_ID is missing or not a number")
+        if self.default_intensity not in {"light", "medium", "strong"}:
+            problems.append(
+                f"DEFAULT_INTENSITY must be light|medium|strong, got "
+                f"'{self.default_intensity}'")
+        if problems:
+            raise SystemExit("Configuration error:\n  - " + "\n  - ".join(problems))
+
+    def ensure_dirs(self) -> None:
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+
+
+settings = Settings()
