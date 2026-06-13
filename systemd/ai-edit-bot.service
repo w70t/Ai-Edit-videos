@@ -18,10 +18,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/Ai-Edit-videos
+User=abdalwahab
+WorkingDirectory=/home/abdalwahab/Ai-Edit-videos
 # Use the project's virtualenv interpreter.
-ExecStart=/home/pi/Ai-Edit-videos/.venv/bin/python -m bot.main
+ExecStart=/home/abdalwahab/Ai-Edit-videos/.venv/bin/python -m bot.main
 
 # --- Resilience ---
 Restart=always
@@ -41,11 +41,11 @@ NoNewPrivileges=true
 PrivateTmp=false
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/pi/Ai-Edit-videos /tmp
+ReadWritePaths=/home/abdalwahab/Ai-Edit-videos /tmp
 
 # --- Environment ---
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=/home/pi/Ai-Edit-videos/.env
+EnvironmentFile=/home/abdalwahab/Ai-Edit-videos/.env
 
 [Install]
 WantedBy=multi-user.target
