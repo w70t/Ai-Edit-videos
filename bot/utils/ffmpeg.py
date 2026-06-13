@@ -53,6 +53,33 @@ def hw_decode_args(enabled: bool) -> list[str]:
     return []
 
 
+async def make_thumbnail(src: str, dst: str) -> bool:
+    """
+    Grab a single frame as a JPEG thumbnail for Telegram.
+
+    Telegram requires the thumb to be a JPEG, ≤320px on the long side and under
+    ~200KB. We grab a frame ~1s in and downscale while *preserving aspect ratio*
+    (no padding -> no black box). Returns True on success.
+    """
+    from pathlib import Path
+
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-ss", "1", "-i", src,
+        "-frames:v", "1",
+        "-vf", "scale='min(320,iw)':'min(320,ih)':force_original_aspect_ratio=decrease",
+        "-q:v", "5",
+        dst,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.communicate()
+    return proc.returncode == 0 and Path(dst).exists()
+
+
 async def probe(path: str) -> dict:
     """
     Return basic stream info via ffprobe: duration, width, height, codec, size.

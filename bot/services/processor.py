@@ -18,7 +18,7 @@ from aiogram.types import FSInputFile
 from ..config import settings
 from ..keyboards import result_keyboard
 from ..utils.cleanup import remove_path
-from ..utils.ffmpeg import probe
+from ..utils.ffmpeg import make_thumbnail, probe
 from .editor import edit_video
 from .storage import JobRecord
 
@@ -84,6 +84,20 @@ async def render_and_send(
     rec.output = result.output
     rec.last_render_seconds = round(time.monotonic() - started, 2)
 
+    # Probe the OUTPUT (not the source) so Telegram gets the correct dimensions
+    # of the edited file — this is what stops vertical clips showing in a square
+    # box and lets the phone offer "Save to Gallery".
+    out_info = await probe(str(rec.output))
+    width = out_info.get("width") or rec.probe.get("width") or 0
+    height = out_info.get("height") or rec.probe.get("height") or 0
+    duration = int(out_info.get("duration") or rec.probe.get("duration") or 0)
+
+    # Generate a proper aspect-ratio thumbnail (no black padding).
+    thumb_path = rec.work_dir / "thumb.jpg"
+    thumb = None
+    if await make_thumbnail(str(rec.output), str(thumb_path)):
+        thumb = FSInputFile(str(thumb_path))
+
     # Remove the transient status message, then send the finished video.
     if status_message_id:
         try:
@@ -97,8 +111,14 @@ async def render_and_send(
         caption=_caption(rec),
         parse_mode="Markdown",
         supports_streaming=True,
+        # Telling Telegram the real width/height/duration fixes the "box" and
+        # makes it a true saveable video instead of a generic file.
+        width=width or None,
+        height=height or None,
+        duration=duration or None,
+        thumbnail=thumb,
         reply_markup=result_keyboard(rec.id),
     )
     rec.result_message_id = sent.message_id
-    log.info("job %s rendered in %.2fs (%s)", rec.id, rec.last_render_seconds,
-             rec.intensity)
+    log.info("job %s rendered in %.2fs (%s) %dx%d",
+             rec.id, rec.last_render_seconds, rec.intensity, width, height)
