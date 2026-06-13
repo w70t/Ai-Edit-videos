@@ -82,31 +82,75 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  Direct video uploads (video, or video sent as a document)
+#  Video messages — works for BOTH direct uploads AND forwarded posts.
+#
+#  A forwarded message (e.g. a video forwarded from a channel) still carries the
+#  same `message.video` / `video_note` / `animation` / document attachment, so
+#  the very same handler picks it up. We accept:
+#    • video            – normal video files
+#    • video_note        – round "telescope" video messages
+#    • animation         – GIFs / muted short clips
+#    • document (video/*) – videos sent as files (uncompressed)
 # --------------------------------------------------------------------------- #
 def _is_video_doc(doc) -> bool:
     return bool(doc) and (doc.mime_type or "").startswith("video/")
 
 
-@router.message(F.video | F.document.func(_is_video_doc))
+def _pick_media(message: Message):
+    """Return the first usable video-like attachment on the message, or None."""
+    return (
+        message.video
+        or message.video_note
+        or message.animation
+        or (message.document if _is_video_doc(message.document) else None)
+    )
+
+
+def _origin_label(message: Message) -> str:
+    """Describe where the video came from (for the info panel)."""
+    # aiogram 3.7+ exposes forward metadata via forward_origin.
+    origin = getattr(message, "forward_origin", None)
+    if origin is not None:
+        chat = getattr(origin, "chat", None)
+        if chat is not None:
+            name = chat.title or chat.username or "channel"
+            return f"forwarded from {name}"
+        sender = getattr(origin, "sender_user_name", None) or getattr(
+            getattr(origin, "sender_user", None), "full_name", None)
+        return f"forwarded from {sender}" if sender else "forwarded"
+    return "upload"
+
+
+@router.message(
+    F.video
+    | F.video_note
+    | F.animation
+    | F.document.func(_is_video_doc)
+)
 async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
-    media = message.video or message.document
-    size_mb = (media.file_size or 0) / (1024 * 1024)
+    media = _pick_media(message)
+    if media is None:
+        return
+
+    size_mb = (getattr(media, "file_size", 0) or 0) / (1024 * 1024)
     if size_mb > settings.max_video_mb:
         await message.answer(
             f"⚠️ That file is {size_mb:.0f} MB — over the "
             f"{settings.max_video_mb} MB limit.")
         return
 
-    status = await message.answer("⬇️ Receiving your video…")
-    rec = store.new(settings.work_dir, message.chat.id, origin="upload")
+    origin = _origin_label(message)
+    verb = "Importing forwarded video" if origin != "upload" else "Receiving your video"
+    status = await message.answer(f"⬇️ {verb}…")
+
+    rec = store.new(settings.work_dir, message.chat.id, origin=origin)
     dest = rec.work_dir / "source.mp4"
     try:
         await bot.download(media, destination=dest)
         rec.source = dest
         rec.intensity = settings.default_intensity
     except Exception as exc:
-        log.warning("upload download failed: %s", exc)
+        log.warning("media download failed: %s", exc)
         remove_path(rec.work_dir)
         store.drop(rec.id)
         await status.edit_text(

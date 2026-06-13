@@ -1,9 +1,14 @@
 # 🎬 AI Edit Videos — Admin-only Telegram Video Repurposing Bot
 
-A lightweight, **admin-only** Telegram bot that downloads Instagram Reels /
-TikTok links (or your direct uploads), applies **minimal surgical FFmpeg edits**
-to alter the perceptual/audio fingerprint used by duplicate-content detectors,
-and sends the edited clip back **only to you** with a clean inline control panel.
+A lightweight, **admin-only** Telegram bot that takes a video from **any** of:
+
+- an **Instagram Reels / TikTok link**,
+- a **video you upload** directly,
+- or a **video you forward from a channel/chat** (incl. video notes & GIFs),
+
+then applies **minimal surgical FFmpeg edits** to alter the perceptual/audio
+fingerprint used by duplicate-content detectors, and sends the edited clip back
+**only to you** with a clean inline control panel.
 
 Built to run **24/7 on a Raspberry Pi 5 (8GB)** — async, queued, and frugal
 with memory and CPU.

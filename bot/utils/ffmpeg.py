@@ -79,14 +79,14 @@ async def probe(path: str) -> dict:
         return {}
 
     fmt = data.get("format", {})
-    video = next(
-        (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
-        {},
-    )
+    streams = data.get("streams", [])
+    video = next((s for s in streams if s.get("codec_type") == "video"), {})
+    has_audio = any(s.get("codec_type") == "audio" for s in streams)
     return {
         "duration": float(fmt.get("duration", 0) or 0),
         "size": int(fmt.get("size", 0) or 0),
         "width": int(video.get("width", 0) or 0),
         "height": int(video.get("height", 0) or 0),
         "codec": video.get("codec_name", "unknown"),
+        "has_audio": has_audio,
     }
