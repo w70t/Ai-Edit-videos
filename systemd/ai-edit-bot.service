@@ -1,0 +1,51 @@
+# ===========================================================================
+#  systemd unit for the AI Edit Videos bot (Raspberry Pi 5)
+#
+#  Install:
+#    sudo cp systemd/ai-edit-bot.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable --now ai-edit-bot
+#
+#  Logs:
+#    journalctl -u ai-edit-bot -f
+#
+#  Adjust User= and the two paths below to match your setup.
+# ===========================================================================
+[Unit]
+Description=AI Edit Videos — Admin-only Telegram video repurposing bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Ai-Edit-videos
+# Use the project's virtualenv interpreter.
+ExecStart=/home/pi/Ai-Edit-videos/.venv/bin/python -m bot.main
+
+# --- Resilience ---
+Restart=always
+RestartSec=5
+# Give FFmpeg renders time to wind down on stop.
+TimeoutStopSec=30
+
+# --- Resource guardrails for an 8GB Pi (leave plenty for the OS) ---
+MemoryHigh=2G
+MemoryMax=3G
+# Keep FFmpeg from hogging all cores / starving the OS.
+CPUWeight=80
+Nice=5
+
+# --- Light hardening ---
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/pi/Ai-Edit-videos /tmp
+
+# --- Environment ---
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/pi/Ai-Edit-videos/.env
+
+[Install]
+WantedBy=multi-user.target

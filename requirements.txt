@@ -1,0 +1,15 @@
+# --- Core bot framework (async) ---
+aiogram==3.13.1
+
+# --- Configuration ---
+python-dotenv==1.0.1
+
+# --- Downloading (Instagram Reels / TikTok / direct links) ---
+yt-dlp==2024.12.13
+
+# --- HTTP client for the research API (Tavily) ---
+aiohttp==3.10.10
+
+# NOTE:
+#   FFmpeg / FFprobe are system binaries, NOT pip packages.
+#   Install them on the Pi with:  sudo apt install -y ffmpeg
