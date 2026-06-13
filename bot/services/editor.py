@@ -27,7 +27,7 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..utils.ffmpeg import hw_decode_args
+from ..utils.ffmpeg import hw_decode_args, probe
 
 log = logging.getLogger(__name__)
 
@@ -109,28 +109,34 @@ def _build_filters(intensity: str, opts: EditOptions) -> tuple[str, str, float]:
 
 
 def _build_command(
-    src: Path, dst: Path, vf: str, af: str, hw: bool
+    src: Path, dst: Path, vf: str, af: str, hw: bool, has_audio: bool
 ) -> list[str]:
-    return [
+    cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         # nice/low-priority friendly threading for the Pi
         "-threads", "3",
         *hw_decode_args(hw),
         "-i", str(src),
         "-vf", vf,
-        "-af", af,
+    ]
+    # Apply audio filters / re-encode only when the source actually has audio
+    # (video notes, GIFs and some clips don't) — otherwise drop audio with -an.
+    if has_audio:
+        cmd += ["-af", af, "-c:a", "aac", "-b:a", "128k"]
+    else:
+        cmd += ["-an"]
+    cmd += [
         # software H.264 encode — reliable on Pi 5, good for short social clips
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "23",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "128k",
         "-movflags", "+faststart",
         "-map_metadata", "-1",          # strip ALL source metadata
         "-metadata", f"comment=v{random.randint(1000, 9999)}",  # fresh tag
         str(dst),
     ]
+    return cmd
 
 
 async def edit_video(
@@ -150,8 +156,12 @@ async def edit_video(
     vf, af, speed = _build_filters(intensity, opts)
     dst = out_dir / f"edited_{intensity}_{random.randint(1000, 9999)}.mp4"
 
+    # Detect audio presence so we never apply audio filters to a silent clip.
+    info = await probe(str(src))
+    has_audio = bool(info.get("has_audio", True))
+
     async def _run(use_hw: bool) -> int:
-        cmd = _build_command(src, dst, vf, af, use_hw)
+        cmd = _build_command(src, dst, vf, af, use_hw, has_audio)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
@@ -176,5 +186,5 @@ async def edit_video(
         intensity=intensity,
         filters=vf,
         speed=speed,
-        cmd=_build_command(src, dst, vf, af, hw),
+        cmd=_build_command(src, dst, vf, af, hw, has_audio),
     )
