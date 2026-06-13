@@ -44,7 +44,7 @@ async def _enqueue_render(
         remove_path(rec.work_dir)
         store.drop(rec.id)
         try:
-            await status_msg.edit_text(f"❌ Failed: {exc}")
+            await status_msg.edit_text(f"❌ فشلت المعالجة: {exc}")
         except Exception:
             pass
 
@@ -52,7 +52,7 @@ async def _enqueue_render(
     if pos > 0:
         try:
             await status_msg.edit_text(
-                f"🕓 Queued (position {pos + 1}). Will start shortly…")
+                f"🕓 في الانتظار (الترتيب {pos + 1}). سيبدأ قريباً…")
         except Exception:
             pass
 
@@ -63,7 +63,7 @@ async def _enqueue_render(
 @router.message(F.text.func(downloader.is_url))
 async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     url = downloader.extract_url(message.text)
-    status = await message.answer("⬇️ Downloading source…")
+    status = await message.answer("⬇️ جارٍ تحميل الفيديو من الرابط…")
 
     rec = store.new(settings.work_dir, message.chat.id, origin=url)
     try:
@@ -75,7 +75,7 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
         remove_path(rec.work_dir)
         store.drop(rec.id)
         await status.edit_text(
-            f"❌ Couldn't download that link.\n`{exc}`", parse_mode="Markdown")
+            f"❌ تعذّر تحميل هذا الرابط.\n`{exc}`", parse_mode="Markdown")
         return
 
     await _enqueue_render(bot, queue, rec, status)
@@ -106,19 +106,23 @@ def _pick_media(message: Message):
     )
 
 
+# قيمة ثابتة تدل على أن الفيديو مرفوع مباشرة (وليس محوّلاً).
+UPLOAD_ORIGIN = "رفع مباشر"
+
+
 def _origin_label(message: Message) -> str:
-    """Describe where the video came from (for the info panel)."""
-    # aiogram 3.7+ exposes forward metadata via forward_origin.
+    """يصف مصدر الفيديو (يُعرض في لوحة المعلومات)."""
+    # aiogram 3.7+ توفّر بيانات التحويل عبر forward_origin.
     origin = getattr(message, "forward_origin", None)
     if origin is not None:
         chat = getattr(origin, "chat", None)
         if chat is not None:
-            name = chat.title or chat.username or "channel"
-            return f"forwarded from {name}"
+            name = chat.title or chat.username or "قناة"
+            return f"محوّل من {name}"
         sender = getattr(origin, "sender_user_name", None) or getattr(
             getattr(origin, "sender_user", None), "full_name", None)
-        return f"forwarded from {sender}" if sender else "forwarded"
-    return "upload"
+        return f"محوّل من {sender}" if sender else "محوّل"
+    return UPLOAD_ORIGIN
 
 
 @router.message(
@@ -135,12 +139,12 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     size_mb = (getattr(media, "file_size", 0) or 0) / (1024 * 1024)
     if size_mb > settings.max_video_mb:
         await message.answer(
-            f"⚠️ That file is {size_mb:.0f} MB — over the "
-            f"{settings.max_video_mb} MB limit.")
+            f"⚠️ حجم الملف {size_mb:.0f} ميجابايت — أكبر من الحد المسموح "
+            f"({settings.max_video_mb} ميجابايت).")
         return
 
     origin = _origin_label(message)
-    verb = "Importing forwarded video" if origin != "upload" else "Receiving your video"
+    verb = "جارٍ استيراد الفيديو المحوّل" if origin != UPLOAD_ORIGIN else "جارٍ استلام الفيديو"
     status = await message.answer(f"⬇️ {verb}…")
 
     rec = store.new(settings.work_dir, message.chat.id, origin=origin)
@@ -154,7 +158,7 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
         remove_path(rec.work_dir)
         store.drop(rec.id)
         await status.edit_text(
-            f"❌ Couldn't receive the video.\n`{exc}`", parse_mode="Markdown")
+            f"❌ تعذّر استلام الفيديو.\n`{exc}`", parse_mode="Markdown")
         return
 
     await _enqueue_render(bot, queue, rec, status)

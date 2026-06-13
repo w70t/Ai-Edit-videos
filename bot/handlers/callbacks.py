@@ -42,10 +42,18 @@ def _arg(data: str) -> str:
     return parts[2] if len(parts) > 2 else ""
 
 
+# أسماء شدّة التعديل بالعربي للعرض.
+INTENSITY_AR = {"light": "خفيف", "medium": "متوسط", "strong": "قوي"}
+# أسماء الخيارات بالعربي.
+OPTION_AR = {"flip": "العكس", "zoom": "التقريب",
+             "color": "الألوان", "pitch": "طبقة الصوت"}
+
+
 async def _require_job(cq: CallbackQuery) -> JobRecord | None:
     rec = store.get(_job_id(cq.data))
     if rec is None or rec.source is None or not rec.source.exists():
-        await cq.answer("⚠️ This job expired — send the video again.", show_alert=True)
+        await cq.answer("⚠️ انتهت صلاحية هذه المهمة — أرسل الفيديو من جديد.",
+                        show_alert=True)
         return None
     return rec
 
@@ -64,7 +72,7 @@ async def _queue_rerender(cq: CallbackQuery, bot: Bot, queue: JobQueue,
 
     async def on_error(exc: Exception) -> None:
         try:
-            await status.edit_text(f"❌ Re-render failed: {exc}")
+            await status.edit_text(f"❌ فشلت إعادة المعالجة: {exc}")
         except Exception:
             pass
 
@@ -82,9 +90,10 @@ async def cb_edit(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
         return
     rec.intensity = _arg(cq.data) or rec.intensity
     rec.variant_count = 0
-    await cq.answer(f"Re-rendering at {rec.intensity} intensity…")
+    label = INTENSITY_AR.get(rec.intensity, rec.intensity)
+    await cq.answer(f"جارٍ إعادة المعالجة بشدّة {label}…")
     await _queue_rerender(cq, bot, queue, rec,
-                          f"⚙️ Applying *{rec.intensity}* edit…")
+                          f"⚙️ جارٍ تطبيق تعديل *{label}*…")
 
 
 # --------------------------------------------------------------------------- #
@@ -96,9 +105,9 @@ async def cb_variant(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
     if not rec:
         return
     rec.variant_count += 1
-    await cq.answer("Generating a fresh variant…")
-    # Same intensity/options; the editor's internal randomness makes it unique.
-    await _queue_rerender(cq, bot, queue, rec, "🎲 Generating new variant…")
+    await cq.answer("جارٍ إنشاء نسخة جديدة…")
+    # نفس الشدّة/الخيارات؛ العشوائية الداخلية في المحرّك تجعلها فريدة.
+    await _queue_rerender(cq, bot, queue, rec, "🎲 جارٍ إنشاء نسخة جديدة…")
 
 
 @router.callback_query(F.data.startswith("settings:"))
@@ -107,12 +116,13 @@ async def cb_settings(cq: CallbackQuery) -> None:
     if not rec:
         return
     o = rec.options
-    state = (f"flip:{'on' if o.flip else 'off'}  "
-             f"zoom:{'on' if o.zoom else 'off'}  "
-             f"color:{'on' if o.color else 'off'}  "
-             f"pitch:{'on' if o.pitch else 'off'}")
+    on, off = "مفعّل", "متوقف"
+    state = (f"عكس:{on if o.flip else off}  "
+             f"تقريب:{on if o.zoom else off}  "
+             f"ألوان:{on if o.color else off}  "
+             f"صوت:{on if o.pitch else off}")
     await cq.message.edit_reply_markup(reply_markup=settings_keyboard(rec.id))
-    await cq.answer(f"Current: {state}")
+    await cq.answer(f"الحالي: {state}")
 
 
 @router.callback_query(F.data.startswith("tog:"))
@@ -123,7 +133,8 @@ async def cb_toggle(cq: CallbackQuery) -> None:
     which = _arg(cq.data)
     o = rec.options
     setattr(o, which, not getattr(o, which, False))
-    await cq.answer(f"{which} → {'on' if getattr(o, which) else 'off'}")
+    name = OPTION_AR.get(which, which)
+    await cq.answer(f"{name} → {'مفعّل' if getattr(o, which) else 'متوقف'}")
 
 
 @router.callback_query(F.data.startswith("back:"))
@@ -142,23 +153,23 @@ async def cb_back(cq: CallbackQuery) -> None:
 async def cb_save(cq: CallbackQuery) -> None:
     rec = await _require_job(cq)
     if not rec or not rec.output or not rec.output.exists():
-        await cq.answer("Nothing to save yet.", show_alert=True)
+        await cq.answer("لا يوجد شيء للحفظ بعد.", show_alert=True)
         return
     settings.save_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     dest = settings.save_dir / f"{stamp}_{rec.intensity}_{rec.output.name}"
     shutil.copy2(rec.output, dest)
-    await cq.answer(f"💾 Saved to {dest.name}", show_alert=True)
+    await cq.answer(f"💾 تم الحفظ باسم {dest.name}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("forward:"))
 async def cb_forward(cq: CallbackQuery, bot: Bot) -> None:
     rec = await _require_job(cq)
     if not rec or not rec.output or not rec.output.exists():
-        await cq.answer("Nothing to forward yet.", show_alert=True)
+        await cq.answer("لا يوجد شيء للإرسال بعد.", show_alert=True)
         return
     if not settings.forward_channel_id:
-        await cq.answer("Set FORWARD_CHANNEL_ID in .env first.", show_alert=True)
+        await cq.answer("اضبط FORWARD_CHANNEL_ID في ملف .env أولاً.", show_alert=True)
         return
     try:
         await bot.send_video(
@@ -167,9 +178,9 @@ async def cb_forward(cq: CallbackQuery, bot: Bot) -> None:
             caption="",
             supports_streaming=True,
         )
-        await cq.answer("📤 Forwarded to channel.")
+        await cq.answer("📤 تم الإرسال إلى القناة.")
     except Exception as exc:
-        await cq.answer(f"Forward failed: {exc}", show_alert=True)
+        await cq.answer(f"فشل الإرسال: {exc}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("delete:"))
@@ -183,7 +194,7 @@ async def cb_delete(cq: CallbackQuery) -> None:
     if rec:
         remove_path(rec.work_dir)
         store.drop(rec.id)
-    await cq.answer("🗑 Deleted.")
+    await cq.answer("🗑 تم الحذف.")
 
 
 # --------------------------------------------------------------------------- #
@@ -194,11 +205,11 @@ async def cb_original(cq: CallbackQuery, bot: Bot) -> None:
     rec = await _require_job(cq)
     if not rec:
         return
-    await cq.answer("Sending the original…")
+    await cq.answer("جارٍ إرسال الفيديو الأصلي…")
     await bot.send_document(
         chat_id=rec.chat_id,
         document=FSInputFile(str(rec.source)),
-        caption="⬇️ Original (unedited) source",
+        caption="⬇️ الفيديو الأصلي (بدون تعديل)",
     )
 
 
@@ -209,17 +220,18 @@ async def cb_info(cq: CallbackQuery) -> None:
         return
     p = rec.probe or {}
     dur = p.get("duration", 0)
+    label = INTENSITY_AR.get(rec.intensity, rec.intensity)
     info = (
-        "ℹ️ *Processing info*\n"
-        f"• Job: `{rec.id}`\n"
-        f"• Source: {rec.origin[:60]}\n"
-        f"• Resolution: {p.get('width', '?')}×{p.get('height', '?')}\n"
-        f"• Duration: {dur:.1f}s\n"
-        f"• Codec: {p.get('codec', '?')}\n"
-        f"• Intensity: {rec.intensity}\n"
-        f"• Variants made: {rec.variant_count}\n"
-        f"• Last render: {rec.last_render_seconds:.2f}s\n"
-        f"• HW accel: {settings.hw_accel}"
+        "ℹ️ *معلومات المعالجة*\n"
+        f"• المهمة: `{rec.id}`\n"
+        f"• المصدر: {rec.origin[:60]}\n"
+        f"• الأبعاد: {p.get('width', '?')}×{p.get('height', '?')}\n"
+        f"• المدة: {dur:.1f} ثانية\n"
+        f"• الترميز: {p.get('codec', '?')}\n"
+        f"• الشدّة: {label}\n"
+        f"• عدد النسخ: {rec.variant_count}\n"
+        f"• آخر معالجة: {rec.last_render_seconds:.2f} ثانية\n"
+        f"• تسريع عتادي: {settings.hw_accel}"
     )
     await cq.message.answer(info, parse_mode="Markdown")
     await cq.answer()

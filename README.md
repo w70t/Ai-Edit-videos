@@ -1,157 +1,160 @@
-# 🎬 AI Edit Videos — Admin-only Telegram Video Repurposing Bot
+<div dir="rtl">
 
-A lightweight, **admin-only** Telegram bot that takes a video from **any** of:
+# 🎬 بوت تعديل الفيديوهات — بوت تيليجرام خاص بالأدمن لإعادة نشر الفيديوهات
 
-- an **Instagram Reels / TikTok link**,
-- a **video you upload** directly,
-- or a **video you forward from a channel/chat** (incl. video notes & GIFs),
+بوت تيليجرام خفيف **خاص بالأدمن فقط** (مستخدم واحد) يأخذ الفيديو من **أي** مصدر:
 
-then applies **minimal surgical FFmpeg edits** to alter the perceptual/audio
-fingerprint used by duplicate-content detectors, and sends the edited clip back
-**only to you** with a clean inline control panel.
+- **رابط ريلز إنستغرام / تيك توك**
+- **فيديو ترفعه** مباشرة
+- **فيديو تحوّله (forward)** من قناة أو محادثة (يشمل الفيديو الدائري والـ GIF)
 
-Built to run **24/7 on a Raspberry Pi 5 (8GB)** — async, queued, and frugal
-with memory and CPU.
+ثم يطبّق **تعديلات بسيطة ودقيقة بواسطة FFmpeg** لتغيير البصمة المرئية/الصوتية
+التي تستخدمها أنظمة كشف المحتوى المكرر، ويرجّع لك النسخة المعدّلة **لك أنت فقط**
+مع لوحة أزرار أنيقة للتحكم.
 
-> ⚠️ **Use responsibly.** This tool is intended for *your own* content and for
-> legitimate repurposing/format-conversion workflows. Respect each platform's
-> Terms of Service and applicable copyright law.
+مصمّم ليعمل **24/7 على Raspberry Pi 5 (8GB)** — غير متزامن، يعتمد طابور مهام،
+وموفّر في الذاكرة والمعالج.
 
----
-
-## 1. Recommended tech stack (Raspberry Pi 5 8GB)
-
-| Layer            | Choice                          | Why on a Pi 5 |
-|------------------|---------------------------------|---------------|
-| OS               | Raspberry Pi OS (64-bit, Bookworm) | Best driver + FFmpeg support |
-| Language         | Python 3.11+                    | Ships with Bookworm, great async |
-| Bot framework    | **aiogram 3** (async)           | Modern, fast, low overhead |
-| Downloader       | **yt-dlp**                      | Robust Reels/TikTok extraction |
-| Video engine     | **FFmpeg** (`libx264` encode, `v4l2m2m` HW decode) | Stable & efficient for short clips |
-| Job queue        | `asyncio.Queue` + worker pool   | Zero extra services, caps concurrency |
-| Research (opt.)  | **Tavily** API                  | Lightweight current-info lookups |
-| Process manager  | **systemd**                     | Auto-restart, resource limits |
+> ⚠️ **استخدمه بمسؤولية.** هذه الأداة مخصّصة لـ *محتواك أنت* ولأغراض إعادة
+> النشر / تحويل الصيغ المشروعة. احترم شروط الخدمة لكل منصّة وقوانين حقوق النشر.
 
 ---
 
-## 2. Project structure
+## 1️⃣ المتطلّبات التقنية الموصى بها (Raspberry Pi 5 8GB)
+
+| الطبقة            | الاختيار                          | السبب على الـ Pi 5 |
+|------------------|-----------------------------------|---------------------|
+| نظام التشغيل      | Raspberry Pi OS (64-bit, Bookworm) | أفضل دعم للتعريفات و FFmpeg |
+| اللغة            | Python 3.11+                      | مدمجة مع Bookworm، ممتازة للعمل غير المتزامن |
+| إطار البوت        | **aiogram 3** (async)             | حديث وسريع واستهلاك منخفض |
+| التحميل          | **yt-dlp**                        | استخراج قوي للريلز والتيك توك |
+| محرّك الفيديو      | **FFmpeg** (ترميز `libx264`، فك تشفير عتادي `v4l2m2m`) | مستقر وفعّال للمقاطع القصيرة |
+| طابور المهام      | `asyncio.Queue` + مجموعة عمّال     | بدون خدمات إضافية، يحدّد عدد المعالجات المتزامنة |
+| البحث (اختياري)   | واجهة **Tavily**                  | بحث خفيف عن أحدث المعلومات |
+| مدير العمليات     | **systemd**                       | إعادة تشغيل تلقائية + حدود للموارد |
+
+---
+
+## 2️⃣ هيكل المشروع
+
+<div dir="ltr">
 
 ```
 Ai-Edit-videos/
 ├── bot/
-│   ├── __init__.py
-│   ├── main.py              # entrypoint: wires queue + dispatcher, polls
-│   ├── config.py            # .env-backed settings (frozen dataclass)
-│   ├── filters.py           # IsAdmin gate (single user ID)
-│   ├── keyboards.py         # the inline keyboard layouts
+│   ├── main.py            # نقطة البداية: يربط الطابور + الموزّع ويستقبل التحديثات
+│   ├── config.py          # الإعدادات من ملف .env
+│   ├── filters.py         # بوابة الأدمن (مستخدم واحد)
+│   ├── keyboards.py        # تصاميم لوحات الأزرار
 │   ├── handlers/
-│   │   ├── __init__.py      # build_router() aggregates all routers
-│   │   ├── commands.py      # /start /status /research
-│   │   ├── media.py         # link + video-upload handlers
-│   │   └── callbacks.py     # all inline-button handlers
+│   │   ├── commands.py     # /start /status /research
+│   │   ├── media.py        # معالج الروابط ورفع/تحويل الفيديو
+│   │   └── callbacks.py    # معالجات كل الأزرار
 │   ├── services/
-│   │   ├── downloader.py    # yt-dlp wrapper (threaded)
-│   │   ├── editor.py        # FFmpeg edit recipes (light/medium/strong)
-│   │   ├── processor.py     # render + send-with-keyboard glue
-│   │   ├── queue.py         # bounded async job queue
-│   │   ├── storage.py       # in-memory job registry
-│   │   └── research.py      # Tavily client
+│   │   ├── downloader.py   # غلاف yt-dlp
+│   │   ├── editor.py       # وصفات تعديل FFmpeg (خفيف/متوسط/قوي)
+│   │   ├── processor.py    # المعالجة والإرسال مع لوحة الأزرار
+│   │   ├── queue.py        # طابور مهام غير متزامن محدود
+│   │   ├── storage.py      # سجلّ المهام في الذاكرة
+│   │   └── research.py     # عميل Tavily
 │   └── utils/
-│       ├── ffmpeg.py        # HW-decode detection + ffprobe
-│       └── cleanup.py       # per-job + periodic temp cleanup
+│       ├── ffmpeg.py       # كشف التسريع العتادي + قراءة بيانات الفيديو
+│       └── cleanup.py      # تنظيف الملفات المؤقتة
 ├── systemd/ai-edit-bot.service
-├── scripts/install_pi.sh
+├── scripts/install_pi.sh   # تثبيت تلقائي
+├── scripts/update.sh       # تحديث بأمر واحد
 ├── requirements.txt
 ├── .env.example
 └── README.md
 ```
 
----
-
-## 3. Inline keyboard
-
-Sent under **every** finished video:
-
-```
-Row 1 – Edit Intensity
-[🟢 Light Edit] [🟡 Medium Edit] [🔴 Strong Edit]
-
-Row 2 – Variants
-[🎲 Generate New Variant] [⚙️ Try Different Settings]
-
-Row 3 – Actions
-[💾 Save to Folder] [📤 Forward to Channel] [🗑 Delete this version]
-
-Row 4 – Quick Options
-[⬇️ Download Original] [ℹ️ Show Processing Info]
-```
-
-**What each button does** (`bot/handlers/callbacks.py`):
-
-| Button | Action |
-|--------|--------|
-| Light / Medium / Strong | Set intensity and **re-render** the source through the queue |
-| Generate New Variant | Re-render at the same settings — internal randomness makes a unique file |
-| Try Different Settings | Open a sub-menu to toggle `flip / zoom / color / pitch`, then re-render |
-| Save to Folder | Copy the current render into `SAVE_DIR` with a timestamped name |
-| Forward to Channel | Send the render to `FORWARD_CHANNEL_ID` |
-| Delete this version | Delete the message + wipe the job's temp files |
-| Download Original | Send back the unedited source as a document |
-| Show Processing Info | Resolution, duration, codec, render time, HW-accel status |
+</div>
 
 ---
 
-## 4. FFmpeg edit recipes (minimal, surgical)
+## 3️⃣ لوحة الأزرار
 
-Each intensity nudges the things a fingerprint relies on, within a randomized
-band so no two renders are identical (`bot/services/editor.py`):
+تظهر **أسفل كل فيديو معدّل**:
 
-| Intensity | Crop | Color/contrast/sat | Hue | Speed jitter | Notes |
-|-----------|------|--------------------|-----|--------------|-------|
-| 🟢 Light  | ±2 px | ±1% | ±0.4° | ±0.5% | barely-there |
-| 🟡 Medium | ±6 px | ±3% | ±1.2° | ±1.2% | default |
-| 🔴 Strong | ±12 px | ±6% | ±2.5° | ±2.0% | + optional flip/zoom/pitch |
+<div dir="ltr">
 
-Always applied: re-encode (`libx264 -crf 23 -preset veryfast`),
-`-map_metadata -1` (strip all metadata), fresh `comment` tag, `+faststart`.
-Example generated command:
+```
+الصف 1 – شدّة التعديل
+[🟢 تعديل خفيف] [🟡 تعديل متوسط] [🔴 تعديل قوي]
+
+الصف 2 – النسخ
+[🎲 إنشاء نسخة جديدة] [⚙️ إعدادات مختلفة]
+
+الصف 3 – الإجراءات
+[💾 حفظ في المجلد] [📤 إرسال للقناة] [🗑 حذف هذه النسخة]
+
+الصف 4 – خيارات سريعة
+[⬇️ تحميل الأصلي] [ℹ️ معلومات المعالجة]
+```
+
+</div>
+
+**وظيفة كل زر:**
+
+| الزر | الوظيفة |
+|------|---------|
+| خفيف / متوسط / قوي | تحديد الشدّة و**إعادة معالجة** الفيديو عبر الطابور |
+| إنشاء نسخة جديدة | إعادة المعالجة بنفس الإعدادات — العشوائية الداخلية تنتج ملفاً فريداً |
+| إعدادات مختلفة | قائمة فرعية لتفعيل/إيقاف `عكس / تقريب / ألوان / صوت` ثم إعادة المعالجة |
+| حفظ في المجلد | نسخ النسخة الحالية إلى مجلد الحفظ باسم مؤرّخ |
+| إرسال للقناة | إرسال النسخة إلى القناة المحدّدة في `FORWARD_CHANNEL_ID` |
+| حذف هذه النسخة | حذف الرسالة + مسح الملفات المؤقتة للمهمة |
+| تحميل الأصلي | إرجاع الفيديو الأصلي بدون تعديل كملف |
+| معلومات المعالجة | الأبعاد، المدة، الترميز، زمن المعالجة، حالة التسريع العتادي |
+
+---
+
+## 4️⃣ وصفات تعديل FFmpeg (بسيطة ودقيقة)
+
+كل شدّة تعدّل العناصر التي تعتمد عليها البصمة، ضمن نطاق عشوائي بحيث لا تتطابق
+أي نسختين (`bot/services/editor.py`):
+
+| الشدّة | القص | السطوع/التباين/التشبّع | درجة اللون | تغيير السرعة | ملاحظات |
+|--------|------|------------------------|------------|--------------|---------|
+| 🟢 خفيف  | ±2 بكسل | ±1% | ±0.4° | ±0.5% | شبه غير محسوس |
+| 🟡 متوسط | ±6 بكسل | ±3% | ±1.2° | ±1.2% | الافتراضي |
+| 🔴 قوي   | ±12 بكسل | ±6% | ±2.5° | ±2.0% | + عكس/تقريب/صوت اختياري |
+
+يُطبَّق دائماً: إعادة ترميز (`libx264 -crf 23 -preset veryfast`)، حذف كل
+البيانات الوصفية (`-map_metadata -1`)، إضافة وسم جديد، و `+faststart`.
+
+> البوت يكتشف `h264_v4l2m2m` تلقائياً ويرجع للمعالجة البرمجية إذا فشل التسريع
+> العتادي — فيشتغل على أي Pi.
+
+---
+
+## 5️⃣ طابور المهام
+
+طابور `asyncio.Queue` محدود مع مجموعة عمّال (`bot/services/queue.py`).
+المتغيّر `MAX_CONCURRENT_JOBS` (الافتراضي **1**) يحدّد كم معالجة FFmpeg تعمل
+في نفس الوقت — أهم إعداد للحفاظ على استجابة الـ Pi. الطلبات الزائدة تنتظر
+بالترتيب ويُخبَر المستخدم بموقعه في الطابور.
+
+---
+
+## 6️⃣ التثبيت على Raspberry Pi 5
+
+<div dir="ltr">
 
 ```bash
-ffmpeg -y -threads 3 -hwaccel v4l2m2m -i source.mp4 \
-  -vf "crop=iw-12:ih-12:6:6,scale=trunc(iw/2)*2:trunc(ih/2)*2,\
-eq=brightness=0.012:contrast=1.008:saturation=0.991,hue=h=0.7,setpts=0.994*PTS" \
-  -af "atempo=1.006" \
-  -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
-  -c:a aac -b:a 128k -movflags +faststart -map_metadata -1 \
-  edited_medium.mp4
-```
-
-> The bot auto-detects `h264_v4l2m2m` and falls back to software decode if a
-> hardware attempt fails — so it just works on any Pi.
-
----
-
-## 5. Job queue
-
-A bounded `asyncio.Queue` with a fixed worker pool (`bot/services/queue.py`).
-`MAX_CONCURRENT_JOBS` (default **1**) caps how many FFmpeg renders run at once —
-the single most important setting for keeping a Pi responsive. Extra requests
-queue FIFO and the user is told their position.
-
----
-
-## 6. Setup on Raspberry Pi 5
-
-```bash
-git clone <your-repo-url> Ai-Edit-videos
+git clone https://github.com/w70t/Ai-Edit-videos.git
 cd Ai-Edit-videos
-bash scripts/install_pi.sh        # installs ffmpeg + venv + deps
-nano .env                         # set BOT_TOKEN and ADMIN_ID
+bash scripts/install_pi.sh        # يثبّت ffmpeg + البيئة + المكتبات
+nano .env                         # ضع BOT_TOKEN و ADMIN_ID
 source .venv/bin/activate
-python -m bot.main                # test run
+python -m bot.main                # تشغيل تجريبي
 ```
 
-Install as a 24/7 service:
+</div>
+
+التشغيل كخدمة دائمة 24/7:
+
+<div dir="ltr">
 
 ```bash
 sudo cp systemd/ai-edit-bot.service /etc/systemd/system/
@@ -160,27 +163,37 @@ sudo systemctl enable --now ai-edit-bot
 journalctl -u ai-edit-bot -f
 ```
 
-### `.env`
+</div>
 
-See [`.env.example`](.env.example). Minimum required:
+### ملف `.env` (الملف الحسّاس)
+
+راجع [`.env.example`](.env.example). الحد الأدنى المطلوب:
+
+<div dir="ltr">
 
 ```ini
-BOT_TOKEN=123456789:AA...      # from @BotFather
-ADMIN_ID=123456789             # from @userinfobot
+BOT_TOKEN=123456789:AA...      # من @BotFather
+ADMIN_ID=123456789             # من @userinfobot
 ```
+
+</div>
+
+> 🔒 ملف `.env` محمي في `.gitignore` فلا يُرفع على GitHub أبداً — يبقى توكنك
+> سرياً على جهازك فقط. وكلّما عدّلته شغّل `sudo systemctl restart ai-edit-bot`.
 
 ---
 
-## 7. Pi 5 optimization tips
+## 7️⃣ نصائح لتحسين الأداء على Pi 5 8GB
 
-- **Keep `MAX_CONCURRENT_JOBS=1`.** One render at a time keeps RAM/heat sane;
-  go to 2 only if your clips are short and you have active cooling.
-- **Cap input resolution** — the downloader already limits to ≤1080p.
-- **Use `-preset veryfast`** (already set): the speed/quality sweet spot on ARM.
-- **Active cooling** (the official Pi 5 fan/case) prevents thermal throttling
-  during back-to-back renders.
-- **Temp on tmpfs:** the default `WORK_DIR=/tmp/...` lives in RAM on most Pi
-  setups — fast and self-clearing. With 8GB this is fine for short clips.
-- **systemd `MemoryMax=3G`** guards the OS if a pathological file slips through.
-- **Auto-cleanup**: per-job temp dirs are deleted on completion, plus a sweeper
-  removes anything older than 2h every 30 min.
+- **أبقِ `MAX_CONCURRENT_JOBS=1`** — معالجة واحدة في كل مرة تحافظ على الذاكرة
+  والحرارة؛ ارفعه إلى 2 فقط مع مقاطع قصيرة وتبريد فعّال.
+- **حدّ دقّة الإدخال** — المُحمّل أصلاً يحدّ بـ ≤1080p.
+- **استخدم `-preset veryfast`** (مضبوط مسبقاً): التوازن الأمثل للسرعة/الجودة على ARM.
+- **تبريد فعّال** (مروحة/علبة الـ Pi 5 الرسمية) يمنع خفض الأداء الحراري.
+- **الملفات المؤقتة في الذاكرة:** المسار الافتراضي `WORK_DIR=/tmp/...` يكون
+  في الذاكرة (tmpfs) على أغلب أجهزة الـ Pi — سريع ويُنظَّف ذاتياً.
+- **`MemoryMax=3G` في systemd** يحمي النظام لو تسلّل ملف ضخم.
+- **تنظيف تلقائي:** مجلدات المهام المؤقتة تُحذف عند الانتهاء، إضافة إلى مكنسة
+  دورية تحذف أي شيء أقدم من ساعتين كل 30 دقيقة.
+
+</div>

@@ -28,30 +28,30 @@ def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
     """
     kb = InlineKeyboardBuilder()
 
-    # Row 1 — Edit Intensity
+    # الصف 1 — شدة التعديل
     kb.row(
-        InlineKeyboardButton(text="🟢 Light Edit",  callback_data=f"edit:{job_id}:light"),
-        InlineKeyboardButton(text="🟡 Medium Edit", callback_data=f"edit:{job_id}:medium"),
-        InlineKeyboardButton(text="🔴 Strong Edit", callback_data=f"edit:{job_id}:strong"),
+        InlineKeyboardButton(text="🟢 تعديل خفيف",  callback_data=f"edit:{job_id}:light"),
+        InlineKeyboardButton(text="🟡 تعديل متوسط", callback_data=f"edit:{job_id}:medium"),
+        InlineKeyboardButton(text="🔴 تعديل قوي",   callback_data=f"edit:{job_id}:strong"),
     )
 
-    # Row 2 — Variants
+    # الصف 2 — النسخ
     kb.row(
-        InlineKeyboardButton(text="🎲 Generate New Variant", callback_data=f"variant:{job_id}"),
-        InlineKeyboardButton(text="⚙️ Try Different Settings", callback_data=f"settings:{job_id}"),
+        InlineKeyboardButton(text="🎲 إنشاء نسخة جديدة", callback_data=f"variant:{job_id}"),
+        InlineKeyboardButton(text="⚙️ إعدادات مختلفة",   callback_data=f"settings:{job_id}"),
     )
 
-    # Row 3 — Actions
+    # الصف 3 — الإجراءات
     kb.row(
-        InlineKeyboardButton(text="💾 Save to Folder",      callback_data=f"save:{job_id}"),
-        InlineKeyboardButton(text="📤 Forward to Channel",  callback_data=f"forward:{job_id}"),
-        InlineKeyboardButton(text="🗑 Delete this version", callback_data=f"delete:{job_id}"),
+        InlineKeyboardButton(text="💾 حفظ في المجلد",   callback_data=f"save:{job_id}"),
+        InlineKeyboardButton(text="📤 إرسال للقناة",     callback_data=f"forward:{job_id}"),
+        InlineKeyboardButton(text="🗑 حذف هذه النسخة",   callback_data=f"delete:{job_id}"),
     )
 
-    # Row 4 — Quick Options
+    # الصف 4 — خيارات سريعة
     kb.row(
-        InlineKeyboardButton(text="⬇️ Download Original",    callback_data=f"original:{job_id}"),
-        InlineKeyboardButton(text="ℹ️ Show Processing Info", callback_data=f"info:{job_id}"),
+        InlineKeyboardButton(text="⬇️ تحميل الأصلي",     callback_data=f"original:{job_id}"),
+        InlineKeyboardButton(text="ℹ️ معلومات المعالجة", callback_data=f"info:{job_id}"),
     )
 
     return kb.as_markup()
@@ -64,17 +64,17 @@ def settings_keyboard(job_id: str) -> InlineKeyboardMarkup:
     """
     kb = InlineKeyboardBuilder()
     kb.row(
-        InlineKeyboardButton(text="↔️ Mirror (flip)", callback_data=f"tog:{job_id}:flip"),
-        InlineKeyboardButton(text="🔍 Zoom crop",     callback_data=f"tog:{job_id}:zoom"),
+        InlineKeyboardButton(text="↔️ عكس (مرآة)",       callback_data=f"tog:{job_id}:flip"),
+        InlineKeyboardButton(text="🔍 تقريب وقص",        callback_data=f"tog:{job_id}:zoom"),
     )
     kb.row(
-        InlineKeyboardButton(text="🎨 Color shift",   callback_data=f"tog:{job_id}:color"),
-        InlineKeyboardButton(text="🔊 Pitch tweak",   callback_data=f"tog:{job_id}:pitch"),
+        InlineKeyboardButton(text="🎨 تغيير الألوان",     callback_data=f"tog:{job_id}:color"),
+        InlineKeyboardButton(text="🔊 تعديل طبقة الصوت", callback_data=f"tog:{job_id}:pitch"),
     )
     kb.row(
-        InlineKeyboardButton(text="▶️ Re-render now",  callback_data=f"variant:{job_id}"),
+        InlineKeyboardButton(text="▶️ إعادة المعالجة الآن", callback_data=f"variant:{job_id}"),
     )
     kb.row(
-        InlineKeyboardButton(text="⬅️ Back", callback_data=f"back:{job_id}"),
+        InlineKeyboardButton(text="⬅️ رجوع", callback_data=f"back:{job_id}"),
     )
     return kb.as_markup()

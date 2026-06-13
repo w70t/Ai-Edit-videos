@@ -17,14 +17,14 @@ router.callback_query.filter(IsAdmin())
 
 
 WELCOME = (
-    "🎬 *AI Edit Videos Bot*\n\n"
-    "Send me an *Instagram Reel / TikTok link* or *upload a video* and I'll "
-    "return a lightly re-edited copy designed to dodge duplicate-content "
-    "detection — then give you a control panel to tweak it.\n\n"
-    "*Commands*\n"
-    "• /start – this message\n"
-    "• /status – queue & system info\n"
-    "• /research – latest detection-method notes\n"
+    "🎬 *بوت تعديل الفيديوهات*\n\n"
+    "أرسل لي *رابط ريلز / تيك توك*، أو *ارفع فيديو*، أو *حوّل (forward) فيديو "
+    "من أي قناة*، وراح أرجّع لك نسخة معدّلة بشكل بسيط مصمّمة لتفادي كشف "
+    "المحتوى المكرر — مع لوحة أزرار للتحكم وتعديل النتيجة.\n\n"
+    "*الأوامر*\n"
+    "• /start – هذه الرسالة\n"
+    "• /status – حالة الطابور والنظام\n"
+    "• /research – آخر أساليب الكشف عن التكرار\n"
 )
 
 
@@ -37,14 +37,14 @@ async def cmd_start(message: Message) -> None:
 async def cmd_status(message: Message, queue: JobQueue) -> None:
     pending = queue.pending
     await message.answer(
-        f"📊 *Status*\n• Jobs waiting in queue: *{pending}*\n• Bot: online ✅",
+        f"📊 *الحالة*\n• مهام في الانتظار: *{pending}*\n• البوت: يعمل ✅",
         parse_mode="Markdown",
     )
 
 
 @router.message(Command("research"))
 async def cmd_research(message: Message) -> None:
-    note = await message.answer("🔎 Researching latest detection methods…")
+    note = await message.answer("🔎 جارٍ البحث عن أحدث أساليب الكشف…")
     summary = await research()
     await note.edit_text(summary, parse_mode="Markdown",
                          disable_web_page_preview=True)

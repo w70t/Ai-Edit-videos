@@ -29,18 +29,18 @@ def _caption(rec: JobRecord) -> str:
     flags = []
     o = rec.options
     if o.flip:
-        flags.append("flip")
+        flags.append("عكس")
     if o.zoom:
-        flags.append("zoom")
+        flags.append("تقريب")
     if o.color:
-        flags.append("color")
+        flags.append("ألوان")
     if o.pitch:
-        flags.append("pitch")
-    extras = (" · " + ", ".join(flags)) if flags else ""
-    label = {"light": "🟢 Light", "medium": "🟡 Medium", "strong": "🔴 Strong"}.get(
+        flags.append("طبقة الصوت")
+    extras = (" · " + "، ".join(flags)) if flags else ""
+    label = {"light": "🟢 خفيف", "medium": "🟡 متوسط", "strong": "🔴 قوي"}.get(
         rec.intensity, rec.intensity)
-    variant = f" · variant #{rec.variant_count}" if rec.variant_count else ""
-    return f"✅ Done — *{label}* edit{extras}{variant}"
+    variant = f" · نسخة #{rec.variant_count}" if rec.variant_count else ""
+    return f"✅ تم — تعديل *{label}*{extras}{variant}"
 
 
 async def render_and_send(
@@ -62,7 +62,7 @@ async def render_and_send(
     if status_message_id:
         try:
             await bot.edit_message_text(
-                "⚙️ Rendering edit… (FFmpeg)",
+                "⚙️ جارٍ تنفيذ التعديل… (FFmpeg)",
                 chat_id=status_chat_id,
                 message_id=status_message_id,
             )

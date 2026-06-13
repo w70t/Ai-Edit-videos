@@ -26,7 +26,8 @@ DEFAULT_QUERY = (
 async def research(query: str = DEFAULT_QUERY) -> str:
     """Return a short markdown summary, or a friendly disabled/error message."""
     if not settings.tavily_api_key:
-        return "ℹ️ Research is disabled — set TAVILY_API_KEY in .env to enable it."
+        return ("ℹ️ ميزة البحث متوقفة — اضبط TAVILY_API_KEY في ملف .env "
+                "لتفعيلها.")
 
     payload = {
         "api_key": settings.tavily_api_key,
@@ -40,22 +41,22 @@ async def research(query: str = DEFAULT_QUERY) -> str:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(TAVILY_URL, json=payload) as resp:
                 if resp.status != 200:
-                    return f"⚠️ Research API returned HTTP {resp.status}."
+                    return f"⚠️ خدمة البحث أرجعت الرمز HTTP {resp.status}."
                 data = await resp.json()
     except Exception as exc:
         log.warning("research failed: %s", exc)
-        return "⚠️ Research request failed (network/timeout)."
+        return "⚠️ فشل طلب البحث (مشكلة شبكة أو انتهاء المهلة)."
 
     answer = (data.get("answer") or "").strip()
     results = data.get("results", [])[:3]
 
-    lines = ["🔎 *Research summary*"]
+    lines = ["🔎 *ملخّص البحث*"]
     if answer:
         lines.append(f"\n{answer}")
     if results:
-        lines.append("\n*Sources:*")
+        lines.append("\n*المصادر:*")
         for r in results:
-            title = r.get("title", "source")
+            title = r.get("title", "مصدر")
             url = r.get("url", "")
             lines.append(f"• [{title}]({url})")
-    return "\n".join(lines) if len(lines) > 1 else "No results found."
+    return "\n".join(lines) if len(lines) > 1 else "لا توجد نتائج."
