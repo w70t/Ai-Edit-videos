@@ -196,4 +196,140 @@ ADMIN_ID=123456789             # من @userinfobot
 - **تنظيف تلقائي:** مجلدات المهام المؤقتة تُحذف عند الانتهاء، إضافة إلى مكنسة
   دورية تحذف أي شيء أقدم من ساعتين كل 30 دقيقة.
 
+---
+
+## 8️⃣ 📌 دليل الأوامر السريع (احفظه — كل ما تحتاجه)
+
+> كل الأوامر مكتوبة لمستخدم الراسبيري `abdalwahab`. غيّر الاسم لو كان مختلفاً.
+
+### ⚙️ التثبيت لأول مرة (مرة واحدة فقط)
+
+<div dir="ltr">
+
+```bash
+cd ~
+git clone https://github.com/w70t/Ai-Edit-videos.git
+cd ~/Ai-Edit-videos
+bash scripts/install_pi.sh        # يثبّت ffmpeg + البيئة + المكتبات
+nano .env                         # ضع BOT_TOKEN و ADMIN_ID ثم احفظ (Ctrl+O ثم Ctrl+X)
+```
+
+</div>
+
+### ▶️ تشغيل تجريبي يدوي (للاختبار فقط)
+
+<div dir="ltr">
+
+```bash
+cd ~/Ai-Edit-videos
+source .venv/bin/activate
+python -m bot.main                # للإيقاف: Ctrl+C
+```
+
+</div>
+
+### 🟢 تشغيله 24/7 + تشغيل تلقائي بعد انطفاء الجهاز
+
+هذي الخطوة تخلّيه يشتغل دائماً ويرجع لحاله تلقائياً بعد إعادة تشغيل الراسبيري
+أو انقطاع الكهرباء (مرة واحدة فقط):
+
+<div dir="ltr">
+
+```bash
+sudo cp ~/Ai-Edit-videos/systemd/ai-edit-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ai-edit-bot
+```
+
+</div>
+
+> 🔑 كلمة `enable` هي السحر: تخلّيه **يبدأ تلقائياً مع إقلاع الجهاز**.
+> وكلمة `--now` تشغّله حالاً بدون انتظار.
+
+### 🔧 أوامر التحكّم اليومية
+
+<div dir="ltr">
+
+```bash
+sudo systemctl status ai-edit-bot     # هل يعمل؟ (للخروج اضغط q)
+sudo systemctl restart ai-edit-bot    # إعادة تشغيل (بعد تعديل .env مثلاً)
+sudo systemctl stop ai-edit-bot       # إيقاف مؤقت
+sudo systemctl start ai-edit-bot      # تشغيل بعد الإيقاف
+```
+
+</div>
+
+### ⛔ إيقافه نهائياً (ومنعه من التشغيل التلقائي)
+
+<div dir="ltr">
+
+```bash
+sudo systemctl stop ai-edit-bot       # أوقفه الآن
+sudo systemctl disable ai-edit-bot    # امنعه من البدء تلقائياً مع الإقلاع
+```
+
+</div>
+
+> لإرجاعه للعمل التلقائي بعدها: `sudo systemctl enable --now ai-edit-bot`
+
+### 🔄 تحديث الكود والمكتبات لآخر نسخة
+
+<div dir="ltr">
+
+```bash
+bash ~/Ai-Edit-videos/scripts/update.sh
+```
+
+</div>
+
+هذا الأمر الواحد يسوي كل شي: يسحب آخر كود + يحدّث المكتبات + يعيد تشغيل البوت.
+
+لو تبي تسويها يدوياً:
+
+<div dir="ltr">
+
+```bash
+cd ~/Ai-Edit-videos
+git pull origin claude/telegram-video-bot-pi-p3ri3m   # اسحب آخر كود
+source .venv/bin/activate
+pip install --upgrade -r requirements.txt              # حدّث المكتبات
+sudo systemctl restart ai-edit-bot                     # أعد التشغيل
+```
+
+</div>
+
+### 📜 متابعة السجلّات (لمعرفة وش يصير / تشخيص الأخطاء)
+
+<div dir="ltr">
+
+```bash
+journalctl -u ai-edit-bot -f              # متابعة حية (للخروج Ctrl+C)
+journalctl -u ai-edit-bot -n 50 --no-pager # آخر 50 سطر
+journalctl -u ai-edit-bot --since today    # سجلّات اليوم
+```
+
+</div>
+
+### 🔐 تعديل الإعدادات الحسّاسة (التوكن / الـ ID / القناة)
+
+<div dir="ltr">
+
+```bash
+nano ~/Ai-Edit-videos/.env                # عدّل ثم احفظ
+sudo systemctl restart ai-edit-bot        # مهم: أعد التشغيل ليسري التعديل
+```
+
+</div>
+
+### 🆘 جدول سريع لحل المشاكل
+
+| المشكلة | الأمر / الحل |
+|---------|--------------|
+| ما أدري هل يشتغل | `sudo systemctl status ai-edit-bot` |
+| عدّلت `.env` وما تغيّر شي | `sudo systemctl restart ai-edit-bot` |
+| البوت ما يرد في تيليجرام | راجع السجلّات: `journalctl -u ai-edit-bot -n 50 --no-pager` |
+| أبي آخر التحديثات | `bash ~/Ai-Edit-videos/scripts/update.sh` |
+| أبي أوقفه مؤقتاً | `sudo systemctl stop ai-edit-bot` |
+| بعد إعادة تشغيل الجهاز ما اشتغل | `sudo systemctl enable --now ai-edit-bot` |
+
 </div>
