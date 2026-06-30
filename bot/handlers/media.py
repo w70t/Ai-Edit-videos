@@ -9,6 +9,7 @@ Both paths converge on the same pattern:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Bot, F, Router
@@ -17,6 +18,7 @@ from aiogram.types import Message
 from ..config import settings
 from ..filters import IsAdmin
 from ..services import downloader
+from ..services.dedup import hash_file, registry
 from ..services.processor import render_and_send
 from ..services.queue import Job, JobQueue
 from ..services.storage import JobRecord, store
@@ -26,6 +28,34 @@ log = logging.getLogger(__name__)
 
 router = Router(name="media")
 router.message.filter(IsAdmin())
+
+
+async def _is_duplicate(rec: JobRecord, status_msg: Message) -> bool:
+    """
+    If duplicate-skipping is on and this exact source was processed before,
+    drop the job, tell the admin, and return True. Otherwise stamp the hash on
+    the record (it is committed to the registry only after a successful render)
+    and return False.
+    """
+    if not settings.skip_duplicates or rec.source is None:
+        return False
+
+    # Hashing is blocking disk I/O — keep it off the event loop.
+    digest = await asyncio.to_thread(hash_file, rec.source)
+    prev = registry.seen(digest)
+    if prev is not None:
+        remove_path(rec.work_dir)
+        store.drop(rec.id)
+        try:
+            await status_msg.edit_text(
+                "⏭️ تم التخطّي — هذا الفيديو سبق معالجته من قبل.\n"
+                "أرسل /forget لمسح سجل التكرار إن أردت إعادة معالجته.")
+        except Exception:
+            pass
+        return True
+
+    rec.source_hash = digest
+    return False
 
 
 async def _enqueue_render(
@@ -76,6 +106,9 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
         store.drop(rec.id)
         await status.edit_text(
             f"❌ تعذّر تحميل هذا الرابط.\n`{exc}`", parse_mode="Markdown")
+        return
+
+    if await _is_duplicate(rec, status):
         return
 
     await _enqueue_render(bot, queue, rec, status)
@@ -159,6 +192,9 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
         store.drop(rec.id)
         await status.edit_text(
             f"❌ تعذّر استلام الفيديو.\n`{exc}`", parse_mode="Markdown")
+        return
+
+    if await _is_duplicate(rec, status):
         return
 
     await _enqueue_render(bot, queue, rec, status)

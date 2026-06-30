@@ -19,6 +19,7 @@ from ..config import settings
 from ..keyboards import result_keyboard
 from ..utils.cleanup import remove_path
 from ..utils.ffmpeg import make_thumbnail, probe
+from .dedup import registry
 from .editor import edit_video
 from .storage import JobRecord
 
@@ -120,5 +121,11 @@ async def render_and_send(
         reply_markup=result_keyboard(rec.id),
     )
     rec.result_message_id = sent.message_id
+
+    # Only now that the render succeeded and was delivered do we remember the
+    # source hash — a failed/partial job must not poison future inputs.
+    if settings.skip_duplicates and rec.source_hash:
+        registry.remember(rec.source_hash, rec.origin)
+
     log.info("job %s rendered in %.2fs (%s) %dx%d",
              rec.id, rec.last_render_seconds, rec.intensity, width, height)

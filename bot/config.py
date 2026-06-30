@@ -26,6 +26,13 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- Telegram ---
@@ -43,6 +50,13 @@ class Settings:
 
     # --- Hardware ---
     hw_accel: str = os.getenv("HW_ACCEL", "auto").strip().lower()
+
+    # --- Duplicate-input skipping ---
+    # Skip re-rendering a source file the bot has already processed before.
+    skip_duplicates: bool = _bool("SKIP_DUPLICATES", True)
+    # Where the persistent hash registry is stored (survives restarts).
+    dedup_db: Path = field(default_factory=lambda: Path(
+        os.getenv("DEDUP_DB", "./dedup.json")).expanduser())
 
     # --- Storage ---
     work_dir: Path = field(default_factory=lambda: Path(
