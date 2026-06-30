@@ -25,6 +25,7 @@ class JobRecord:
     id: str
     work_dir: Path                       # per-job temp directory
     source: Path | None = None           # downloaded / uploaded original
+    source_hash: str = ""                # SHA-256 of the source (duplicate check)
     output: Path | None = None           # latest rendered file
     intensity: str = "medium"
     options: EditOptions = field(default_factory=EditOptions)

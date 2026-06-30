@@ -6,7 +6,9 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from ..config import settings
 from ..filters import IsAdmin
+from ..services.dedup import registry
 from ..services.queue import JobQueue
 from ..services.research import research
 
@@ -25,6 +27,7 @@ WELCOME = (
     "• /start – هذه الرسالة\n"
     "• /status – حالة الطابور والنظام\n"
     "• /research – آخر أساليب الكشف عن التكرار\n"
+    "• /forget – مسح سجل تخطّي المكرر (لإعادة معالجة فيديو سبق معالجته)\n"
 )
 
 
@@ -36,8 +39,22 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("status"))
 async def cmd_status(message: Message, queue: JobQueue) -> None:
     pending = queue.pending
+    dedup_state = "مُفعّل ✅" if settings.skip_duplicates else "معطّل ⛔"
     await message.answer(
-        f"📊 *الحالة*\n• مهام في الانتظار: *{pending}*\n• البوت: يعمل ✅",
+        f"📊 *الحالة*\n"
+        f"• مهام في الانتظار: *{pending}*\n"
+        f"• تخطّي المكرر: {dedup_state} (مسجّل: *{registry.count()}*)\n"
+        f"• البوت: يعمل ✅",
+        parse_mode="Markdown",
+    )
+
+
+@router.message(Command("forget"))
+async def cmd_forget(message: Message) -> None:
+    removed = registry.clear()
+    await message.answer(
+        f"🧹 تم مسح سجل تخطّي المكرر — أُزيلت *{removed}* بصمة.\n"
+        "أي فيديو سبق إرساله سيُعالَج من جديد الآن.",
         parse_mode="Markdown",
     )
 
