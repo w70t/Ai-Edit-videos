@@ -108,12 +108,15 @@ async def probe(path: str) -> dict:
     fmt = data.get("format", {})
     streams = data.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), {})
-    has_audio = any(s.get("codec_type") == "audio" for s in streams)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), {})
     return {
         "duration": float(fmt.get("duration", 0) or 0),
         "size": int(fmt.get("size", 0) or 0),
         "width": int(video.get("width", 0) or 0),
         "height": int(video.get("height", 0) or 0),
         "codec": video.get("codec_name", "unknown"),
-        "has_audio": has_audio,
+        "has_audio": bool(audio),
+        # The editor needs the REAL rate: pitch shifting assumes 44.1kHz breaks
+        # badly on 48kHz sources (which is most TikTok / Reels material).
+        "sample_rate": int(audio.get("sample_rate", 0) or 0),
     }

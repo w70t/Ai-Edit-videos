@@ -15,8 +15,10 @@ def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
     """
     The main control panel shown *under every finished video*.
 
-    Layout (exactly as specified):
+    Layout:
 
+        Row 0 – Repost preset (the one that actually moves a fingerprint)
+            [Repost Mode]
         Row 1 – Edit Intensity
             [Light Edit] [Medium Edit] [Strong Edit]
         Row 2 – Variants
@@ -27,6 +29,12 @@ def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
             [Download Original] [Show Processing Info]
     """
     kb = InlineKeyboardBuilder()
+
+    # الصف 0 — وضع إعادة النشر (الوحيد الذي يجمع كل ما يكسر البصمة فعلاً)
+    kb.row(
+        InlineKeyboardButton(text="♻️ وضع إعادة النشر (موصى به)",
+                             callback_data=f"edit:{job_id}:repost"),
+    )
 
     # الصف 1 — شدة التعديل
     kb.row(
@@ -64,12 +72,15 @@ def settings_keyboard(job_id: str) -> InlineKeyboardMarkup:
     """
     kb = InlineKeyboardBuilder()
     kb.row(
-        InlineKeyboardButton(text="↔️ عكس (مرآة)",       callback_data=f"tog:{job_id}:flip"),
-        InlineKeyboardButton(text="🔍 تقريب وقص",        callback_data=f"tog:{job_id}:zoom"),
+        InlineKeyboardButton(text="✂️ قص زمني 🔴",        callback_data=f"tog:{job_id}:trim"),
+        InlineKeyboardButton(text="🔍 تقريب وتأطير 🔴",   callback_data=f"tog:{job_id}:zoom"),
     )
     kb.row(
-        InlineKeyboardButton(text="🎨 تغيير الألوان",     callback_data=f"tog:{job_id}:color"),
-        InlineKeyboardButton(text="🔊 تعديل طبقة الصوت", callback_data=f"tog:{job_id}:pitch"),
+        InlineKeyboardButton(text="🔊 طبقة الصوت 🔴",     callback_data=f"tog:{job_id}:pitch"),
+        InlineKeyboardButton(text="↔️ عكس (مرآة) 🟡",     callback_data=f"tog:{job_id}:flip"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="🎨 تغيير الألوان ⚪",   callback_data=f"tog:{job_id}:color"),
     )
     kb.row(
         InlineKeyboardButton(text="▶️ إعادة المعالجة الآن", callback_data=f"variant:{job_id}"),

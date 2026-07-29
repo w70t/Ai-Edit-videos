@@ -99,7 +99,7 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         rec.source = await downloader.download(
             url, rec.work_dir, settings.max_video_mb)
-        rec.intensity = settings.default_intensity
+        rec.apply_preset(settings.default_intensity)
     except Exception as exc:
         log.warning("download failed: %s", exc)
         remove_path(rec.work_dir)
@@ -185,7 +185,7 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         await bot.download(media, destination=dest)
         rec.source = dest
-        rec.intensity = settings.default_intensity
+        rec.apply_preset(settings.default_intensity)
     except Exception as exc:
         log.warning("media download failed: %s", exc)
         remove_path(rec.work_dir)

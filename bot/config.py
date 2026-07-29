@@ -33,6 +33,12 @@ def _bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+# Kept as a literal rather than imported from services.editor: config sits at
+# the bottom of the import graph and must not depend on a service.
+# Must stay in sync with editor.BANDS.
+INTENSITIES = ("light", "medium", "strong", "repost")
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- Telegram ---
@@ -46,7 +52,7 @@ class Settings:
     # --- Processing limits ---
     max_concurrent_jobs: int = _int("MAX_CONCURRENT_JOBS", 1)
     max_video_mb: int = _int("MAX_VIDEO_MB", 300)
-    default_intensity: str = os.getenv("DEFAULT_INTENSITY", "medium").strip().lower()
+    default_intensity: str = os.getenv("DEFAULT_INTENSITY", "repost").strip().lower()
 
     # --- Hardware ---
     hw_accel: str = os.getenv("HW_ACCEL", "auto").strip().lower()
@@ -71,10 +77,11 @@ class Settings:
             problems.append("BOT_TOKEN is missing")
         if not self.admin_id:
             problems.append("ADMIN_ID is missing or not a number")
-        if self.default_intensity not in {"light", "medium", "strong"}:
+        if self.default_intensity not in INTENSITIES:
             problems.append(
-                f"DEFAULT_INTENSITY must be light|medium|strong, got "
+                f"DEFAULT_INTENSITY must be one of {'|'.join(INTENSITIES)}, got "
                 f"'{self.default_intensity}'")
+
         if problems:
             raise SystemExit("Configuration error:\n  - " + "\n  - ".join(problems))
 
