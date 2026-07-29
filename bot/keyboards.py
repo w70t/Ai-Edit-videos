@@ -1,5 +1,10 @@
 """
-Inline keyboard builders.
+Keyboard builders.
+
+Two kinds live here:
+  * the persistent *reply* keyboard — the always-visible menu under the input
+    box, so nothing in day-to-day use requires typing a slash command,
+  * the *inline* keyboards attached to a finished video.
 
 Callback data format:  "<action>:<job_id>"  (sometimes "<action>:<job_id>:<arg>")
 Keeping it compact matters — Telegram caps callback_data at 64 bytes.
@@ -7,8 +12,50 @@ Keeping it compact matters — Telegram caps callback_data at 64 bytes.
 
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
+                           KeyboardButton, ReplyKeyboardMarkup)
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+
+# --------------------------------------------------------------------------- #
+#  Persistent menu
+#
+#  These strings are matched literally by the command handlers, so they are
+#  defined once here and imported — never retyped.
+# --------------------------------------------------------------------------- #
+BTN_STATUS = "📊 الحالة"
+BTN_RESEARCH = "🔎 بحث"
+BTN_FORGET = "🧹 مسح سجل المكرر"
+BTN_HELP = "ℹ️ مساعدة"
+
+MENU_BUTTONS = (BTN_STATUS, BTN_RESEARCH, BTN_FORGET, BTN_HELP)
+
+
+def main_menu() -> ReplyKeyboardMarkup:
+    """
+    The always-on menu under the message box.
+
+    `is_persistent` keeps it open instead of collapsing behind the little
+    keyboard icon, which is the whole point — the admin should never have to
+    remember a command name.
+    """
+    kb = ReplyKeyboardBuilder()
+    kb.row(KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_RESEARCH))
+    kb.row(KeyboardButton(text=BTN_FORGET), KeyboardButton(text=BTN_HELP))
+    return kb.as_markup(
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="أرسل رابطاً أو فيديو…",
+    )
+
+
+def confirm_forget_keyboard() -> InlineKeyboardMarkup:
+    """Clearing the registry is one tap away — make it two."""
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="✅ نعم، امسح", callback_data="cfg:forget"),
+        InlineKeyboardButton(text="↩️ إلغاء", callback_data="cfg:cancel"),
+    )
+    return kb.as_markup()
 
 
 def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
