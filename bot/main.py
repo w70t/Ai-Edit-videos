@@ -15,6 +15,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand
 
 from .config import settings
 from .handlers import build_router
@@ -71,6 +72,16 @@ async def main() -> None:
     try:
         # Drop any backlog accumulated while the bot was offline.
         await bot.delete_webhook(drop_pending_updates=True)
+
+        # Populate Telegram's native "/" menu. The button keyboard is the
+        # primary interface; this just keeps commands discoverable too.
+        await bot.set_my_commands([
+            BotCommand(command="start", description="البداية وإظهار الأزرار"),
+            BotCommand(command="status", description="حالة الطابور والنظام"),
+            BotCommand(command="research", description="آخر أساليب كشف التكرار"),
+            BotCommand(command="forget", description="مسح سجل تخطّي المكرر"),
+        ])
+
         log.info("bot is up — polling for updates")
         await dp.start_polling(bot, queue=queue)
     finally:

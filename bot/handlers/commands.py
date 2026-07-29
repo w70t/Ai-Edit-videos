@@ -1,13 +1,27 @@
-"""Basic command handlers: /start, /help, /status, /research."""
+"""
+Basic command handlers.
+
+Every action is reachable two ways: the persistent button menu (what the admin
+actually uses) and the classic slash command (kept so the Telegram command menu
+and muscle memory both still work). One handler serves both.
+
+Note the `or_f(...)`: writing `Command(...) | (F.text == X)` looks equivalent
+but is not. Python hands that `|` to magic_filter's `__ror__`, which treats the
+Command object as a plain *value* to combine, producing a MagicFilter that
+blows up with "unsupported operand type(s) for |: 'Command' and 'bool'" the
+first time a message arrives. `or_f` builds a real _OrFilter.
+"""
 
 from __future__ import annotations
 
-from aiogram import Router
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram import F, Router
+from aiogram.filters import Command, or_f
+from aiogram.types import CallbackQuery, Message
 
 from ..config import settings
 from ..filters import IsAdmin
+from ..keyboards import (BTN_FORGET, BTN_HELP, BTN_RESEARCH, BTN_STATUS,
+                         confirm_forget_keyboard, main_menu)
 from ..services.dedup import registry
 from ..services.queue import JobQueue
 from ..services.research import research
@@ -21,45 +35,66 @@ router.callback_query.filter(IsAdmin())
 WELCOME = (
     "🎬 *بوت تعديل الفيديوهات*\n\n"
     "أرسل لي *رابط ريلز / تيك توك*، أو *ارفع فيديو*، أو *حوّل (forward) فيديو "
-    "من أي قناة*، وراح أرجّع لك نسخة معدّلة بشكل بسيط مصمّمة لتفادي كشف "
-    "المحتوى المكرر — مع لوحة أزرار للتحكم وتعديل النتيجة.\n\n"
-    "*الأوامر*\n"
-    "• /start – هذه الرسالة\n"
-    "• /status – حالة الطابور والنظام\n"
-    "• /research – آخر أساليب الكشف عن التكرار\n"
-    "• /forget – مسح سجل تخطّي المكرر (لإعادة معالجة فيديو سبق معالجته)\n"
+    "من أي قناة*، وراح أرجّع لك نسخة معدّلة مصمّمة لتفادي كشف المحتوى المكرر — "
+    "مع لوحة أزرار للتحكم وتعديل النتيجة.\n\n"
+    "👇 *استخدم الأزرار تحت* — ما تحتاج تكتب أي أمر.\n\n"
+    "_تلميح: الملفات فوق 20 ميجابايت لا يسمح تيليجرام للبوتات بتحميلها — "
+    "أرسل الرابط بدل الملف._"
 )
 
 
-@router.message(Command("start", "help"))
+@router.message(or_f(Command("start", "help"), F.text == BTN_HELP))
 async def cmd_start(message: Message) -> None:
-    await message.answer(WELCOME, parse_mode="Markdown")
+    # Sending the menu here is what installs it on the admin's client.
+    await message.answer(WELCOME, parse_mode="Markdown", reply_markup=main_menu())
 
 
-@router.message(Command("status"))
+@router.message(or_f(Command("status"), F.text == BTN_STATUS))
 async def cmd_status(message: Message, queue: JobQueue) -> None:
-    pending = queue.pending
     dedup_state = "مُفعّل ✅" if settings.skip_duplicates else "معطّل ⛔"
     await message.answer(
         f"📊 *الحالة*\n"
-        f"• مهام في الانتظار: *{pending}*\n"
+        f"• مهام في الانتظار: *{queue.pending}*\n"
         f"• تخطّي المكرر: {dedup_state} (مسجّل: *{registry.count()}*)\n"
+        f"• الوضع الافتراضي: *{settings.default_intensity}*\n"
+        f"• حدود تيليجرام: *{settings.max_incoming_mb}* ميجا استلام / "
+        f"*{settings.max_outgoing_mb}* ميجا إرسال\n"
         f"• البوت: يعمل ✅",
         parse_mode="Markdown",
+        reply_markup=main_menu(),
     )
 
 
-@router.message(Command("forget"))
+@router.message(or_f(Command("forget"), F.text == BTN_FORGET))
 async def cmd_forget(message: Message) -> None:
-    removed = registry.clear()
+    count = registry.count()
+    if not count:
+        await message.answer("🧹 السجل فارغ أصلاً — لا شيء لمسحه.",
+                             reply_markup=main_menu())
+        return
+    # A button is easy to hit by accident; confirm before wiping the registry.
     await message.answer(
-        f"🧹 تم مسح سجل تخطّي المكرر — أُزيلت *{removed}* بصمة.\n"
-        "أي فيديو سبق إرساله سيُعالَج من جديد الآن.",
+        f"⚠️ سيُمسح سجل تخطّي المكرر (*{count}* بصمة).\n"
+        f"أي فيديو سبق إرساله سيُعالَج من جديد. متأكد؟",
         parse_mode="Markdown",
+        reply_markup=confirm_forget_keyboard(),
     )
 
 
-@router.message(Command("research"))
+@router.callback_query(F.data == "cfg:forget")
+async def cb_forget_confirm(cq: CallbackQuery) -> None:
+    removed = registry.clear()
+    await cq.message.edit_text(f"🧹 تم المسح — أُزيلت {removed} بصمة.")
+    await cq.answer("تم المسح")
+
+
+@router.callback_query(F.data == "cfg:cancel")
+async def cb_forget_cancel(cq: CallbackQuery) -> None:
+    await cq.message.edit_text("↩️ تم الإلغاء — السجل كما هو.")
+    await cq.answer()
+
+
+@router.message(or_f(Command("research"), F.text == BTN_RESEARCH))
 async def cmd_research(message: Message) -> None:
     note = await message.answer("🔎 جارٍ البحث عن أحدث أساليب الكشف…")
     summary = await research()

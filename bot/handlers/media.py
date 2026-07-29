@@ -30,6 +30,36 @@ router = Router(name="media")
 router.message.filter(IsAdmin())
 
 
+def _too_big_message(size_mb: float) -> str:
+    """
+    Explain the Bot API size ceiling in terms the admin can act on.
+
+    Used both by the up-front size gate and by the download error path: the
+    gate relies on Telegram reporting file_size, which is not guaranteed for
+    every attachment type, so the failure still has to explain itself.
+    """
+    # Legacy Markdown: bold is *one* asterisk. `**x**` renders as an empty bold
+    # run followed by plain text, so it silently loses the emphasis.
+    head = (f"حجم الملف {size_mb:.0f} ميجابايت — أكبر من" if size_mb > 0
+            else "الملف أكبر من")
+    lines = [
+        f"⚠️ {head} حد تيليجرام للبوتات "
+        f"({settings.max_incoming_mb} ميجابايت للاستلام).",
+        "",
+        "هذا حدّ تفرضه واجهة تيليجرام نفسها، ولا يوجد إعداد عندنا يرفعه.",
+        "",
+        "الحل:",
+        "• أرسل *رابط* الفيديو بدل الملف — التحميل عبر الرابط لا يمرّ بهذا "
+        f"الحد إطلاقاً (حتى {settings.max_video_mb} ميجابايت).",
+    ]
+    if not settings.telegram_local_api:
+        lines.append(
+            f"• للمقاطع الطويلة (أكثر من ~دقيقتين) قد تتجاوز *النتيجة* حد "
+            f"الإرسال ({settings.max_outgoing_mb} ميجابايت) أيضاً — عندها "
+            f"تحتاج Bot API server محلياً مع `TELEGRAM_LOCAL_API=true`.")
+    return "\n".join(lines)
+
+
 async def _is_duplicate(rec: JobRecord, status_msg: Message) -> bool:
     """
     If duplicate-skipping is on and this exact source was processed before,
@@ -104,8 +134,9 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
         log.warning("download failed: %s", exc)
         remove_path(rec.work_dir)
         store.drop(rec.id)
-        await status.edit_text(
-            f"❌ تعذّر تحميل هذا الرابط.\n`{exc}`", parse_mode="Markdown")
+        # No parse_mode: yt-dlp errors quote URLs full of _ and *, and a
+        # Markdown parse failure would replace this message with nothing.
+        await status.edit_text(f"❌ تعذّر تحميل هذا الرابط.\n{exc}")
         return
 
     if await _is_duplicate(rec, status):
@@ -174,19 +205,8 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     # oversized upload gets a straight answer instead of an opaque failure
     # halfway through bot.download().
     size_mb = (getattr(media, "file_size", 0) or 0) / (1024 * 1024)
-    limit = min(settings.max_video_mb, settings.max_incoming_mb)
-    if size_mb > limit:
-        note = (
-            "\n\nهذا حدّ تفرضه واجهة تيليجرام على البوتات، لا إعداد عندنا. "
-            "الحلول:\n"
-            "• أرسل **رابط** الفيديو بدل رفعه — التحميل عبر الرابط لا يمرّ "
-            f"بهذا الحد (حتى {settings.max_video_mb} ميجابايت)\n"
-            "• أو شغّل Bot API server محلياً واضبط `TELEGRAM_LOCAL_API=true`"
-        ) if not settings.telegram_local_api else ""
-        await message.answer(
-            f"⚠️ حجم الملف {size_mb:.0f} ميجابايت — أكبر من الحد المسموح "
-            f"({limit} ميجابايت).{note}",
-            parse_mode="Markdown")
+    if size_mb > min(settings.max_video_mb, settings.max_incoming_mb):
+        await message.answer(_too_big_message(size_mb), parse_mode="Markdown")
         return
 
     origin = _origin_label(message)
@@ -203,8 +223,16 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
         log.warning("media download failed: %s", exc)
         remove_path(rec.work_dir)
         store.drop(rec.id)
-        await status.edit_text(
-            f"❌ تعذّر استلام الفيديو.\n`{exc}`", parse_mode="Markdown")
+        # Telegram reports the ceiling as a generic "file is too big" only once
+        # the transfer is attempted — reachable whenever file_size was absent,
+        # so translate it here instead of dumping the raw API error.
+        if "too big" in str(exc).lower():
+            await status.edit_text(_too_big_message(size_mb),
+                                   parse_mode="Markdown")
+        else:
+            # No parse_mode: exception text may contain _ or *, which would
+            # make Telegram reject the message itself.
+            await status.edit_text(f"❌ تعذّر استلام الفيديو.\n{exc}")
         return
 
     if await _is_duplicate(rec, status):
