@@ -50,6 +50,9 @@ log = logging.getLogger(__name__)
 MIN_KEEP_SECONDS = 3.0
 # Never remove more than this fraction of the clip.
 MAX_TRIM_FRACTION = 0.15
+# The central fraction of the frame a reframe must never crop into. Creators put
+# text, faces and captions there; eating it is what makes a repost look wrong.
+SAFE_AREA = 0.85
 
 # Impact markers used in the user-facing notes.
 HIGH, MED, LOW = "🔴", "🟡", "⚪"
@@ -63,10 +66,16 @@ class EditOptions:
     color: bool = True
     pitch: bool = False
     trim: bool = False
+    # --- Reach guards -------------------------------------------------------
+    # These two deliberately WEAKEN fingerprint evasion to protect the signals
+    # that actually drive distribution. Both default to protecting reach.
+    protect_hook: bool = True      # take the trim off the tail, never the opening
+    trending_audio: bool = False   # keep the audio matchable to a trending sound
 
 
 # The toggles a callback button is allowed to flip (guards setattr).
-TOGGLEABLE = ("flip", "zoom", "color", "pitch", "trim")
+TOGGLEABLE = ("flip", "zoom", "color", "pitch", "trim",
+              "protect_hook", "trending_audio")
 
 
 @dataclass(frozen=True)
@@ -101,14 +110,20 @@ INTENSITIES = tuple(BANDS)
 
 
 def preset_options(intensity: str) -> EditOptions:
-    """The option set a preset turns on when the admin picks it."""
+    """
+    The option set a preset turns on when the admin picks it.
+
+    Every preset ships with the reach guards on: the hook is protected by
+    default, and the trending-audio switch is left to the admin because only
+    they know whether the clip rides a trending sound.
+    """
     intensity = (intensity or "").lower()
-    if intensity == "repost":
-        return EditOptions(flip=False, zoom=True, color=True, pitch=True, trim=True)
-    if intensity == "strong":
-        return EditOptions(flip=False, zoom=True, color=True, pitch=True, trim=True)
+    if intensity in ("repost", "strong"):
+        return EditOptions(flip=False, zoom=True, color=True, pitch=True,
+                           trim=True, protect_hook=True, trending_audio=False)
     if intensity == "medium":
-        return EditOptions(flip=False, zoom=True, color=True, pitch=False, trim=False)
+        return EditOptions(flip=False, zoom=True, color=True, pitch=False,
+                           trim=False, protect_hook=True, trending_audio=False)
     return EditOptions()  # light: colour only
 
 
@@ -148,13 +163,19 @@ def _even(value: float, minimum: int = 2) -> int:
     return max(minimum, int(value) // 2 * 2)
 
 
-def _plan_trim(duration: float, budget: float) -> tuple[float, float]:
+def _plan_trim(duration: float, budget: float,
+               protect_hook: bool) -> tuple[float, float]:
     """
     Decide how many seconds to cut off the head and the tail.
 
-    This is the single most effective edit against video fingerprinting and it
-    is invisible to a viewer — but it must never eat a short clip alive, hence
-    the fraction cap and the minimum-runtime floor.
+    Trimming is the single most effective edit against video fingerprinting and
+    it is invisible to a viewer — but it must never eat a short clip alive,
+    hence the fraction cap and the minimum-runtime floor.
+
+    `protect_hook` moves the whole cut to the tail. That is measurably weaker
+    against temporal alignment (the opening still matches frame-for-frame), but
+    watch-through in the first seconds is the strongest ranking signal there is,
+    so trading evasion for the hook is usually the right call.
     """
     if budget <= 0 or duration <= 0:
         return 0.0, 0.0
@@ -163,8 +184,31 @@ def _plan_trim(duration: float, budget: float) -> tuple[float, float]:
         total = duration - MIN_KEEP_SECONDS
     if total < 0.2:
         return 0.0, 0.0
+    if protect_hook:
+        return 0.0, round(total, 2)
     head = round(random.uniform(0.25, 0.75) * total, 2)
     return head, round(total - head, 2)
+
+
+def _safe_offset(outer: int, window: int, reframe: float) -> int:
+    """
+    Pick a crop offset that keeps the central SAFE_AREA of the frame intact.
+
+    The window may only sit where it still fully covers the safe band, so a
+    reframe can never slice text or a face off the edge. The allowed interval is
+    symmetric around the centred offset; `reframe` says how much of it to use.
+    """
+    slack = outer - window
+    if slack <= 0:
+        return 0
+    lo = max(0.0, outer * (1 + SAFE_AREA) / 2 - window)
+    hi = min(float(slack), outer * (1 - SAFE_AREA) / 2)
+    if hi < lo:
+        # Zoom is too deep to honour the safe area — stay dead centre.
+        return _even(slack / 2, minimum=0)
+    span = (hi - lo) / 2 * reframe
+    offset = slack / 2 + random.uniform(-span, span)
+    return _even(min(max(offset, lo), hi), minimum=0)
 
 
 def _plan_reframe(width: int, height: int, band: _Band) -> str | None:
@@ -178,17 +222,15 @@ def _plan_reframe(width: int, height: int, band: _Band) -> str | None:
     if band.zoom <= 0:
         return None
 
+    # Cap the zoom so the safe area can always fit inside the crop window.
     factor = 1.0 + random.uniform(band.zoom * 0.8, band.zoom * 1.2)
+    factor = min(factor, 1 / SAFE_AREA)
 
     if width >= 2 and height >= 2:
         out_w, out_h = _even(width), _even(height)
         crop_w, crop_h = _even(out_w / factor), _even(out_h / factor)
-        max_x, max_y = out_w - crop_w, out_h - crop_h
-        # Centre, nudged off-axis by up to `reframe` of the available slack.
-        off_x = max_x / 2 * (1 + random.uniform(-band.reframe, band.reframe))
-        off_y = max_y / 2 * (1 + random.uniform(-band.reframe, band.reframe))
-        x = _even(min(max(off_x, 0), max_x), minimum=0)
-        y = _even(min(max(off_y, 0), max_y), minimum=0)
+        x = _safe_offset(out_w, crop_w, band.reframe)
+        y = _safe_offset(out_h, crop_h, band.reframe)
         return f"crop={crop_w}:{crop_h}:{x}:{y},scale={out_w}:{out_h}"
 
     # Dimensions unknown (probe failed): centred fallback, still always even.
@@ -214,7 +256,9 @@ def _build_plan(intensity: str, opts: EditOptions, info: dict) -> EditPlan:
     reframe = _plan_reframe(width, height, band) if opts.zoom else None
     if reframe:
         vf.append(reframe)
-        notes.append(f"{HIGH} تقريب وإعادة تأطير — يزيح البصمة المرئية فعلياً")
+        notes.append(
+            f"{HIGH} تقريب وإعادة تأطير — يزيح البصمة المرئية فعلياً "
+            f"(وسط الإطار {int(SAFE_AREA * 100)}% محمي من القص)")
     else:
         c = random.randint(max(1, band.crop_px - 1), band.crop_px + 1)
         vf.append(f"crop=iw-{2 * c}:ih-{2 * c}:{c}:{c}")
@@ -246,13 +290,21 @@ def _build_plan(intensity: str, opts: EditOptions, info: dict) -> EditPlan:
     vf.append(f"setpts={round(1 / speed, 6)}*PTS")
 
     # --- 5) Temporal trim (the strongest lever) -----------------------------
-    trim_start, trim_end = _plan_trim(duration, band.trim) if opts.trim else (0.0, 0.0)
+    trim_start, trim_end = (
+        _plan_trim(duration, band.trim, opts.protect_hook) if opts.trim
+        else (0.0, 0.0))
     out_duration = 0.0
     if trim_start or trim_end:
         out_duration = max(0.0, duration - trim_start - trim_end)
-        notes.append(
-            f"{HIGH} قص زمني {trim_start + trim_end:.1f} ثانية "
-            f"({trim_start:.1f} بداية / {trim_end:.1f} نهاية) — يكسر المحاذاة الزمنية")
+        if opts.protect_hook:
+            notes.append(
+                f"{HIGH} قص زمني {trim_end:.1f} ثانية من النهاية — "
+                f"الـ hook محمي كاملاً (كسر أضعف قليلاً، لكن أول الفيديو سليم)")
+        else:
+            notes.append(
+                f"{HIGH} قص زمني {trim_start + trim_end:.1f} ثانية "
+                f"({trim_start:.1f} بداية / {trim_end:.1f} نهاية) — أقوى كسر زمني، "
+                f"لكنه يمسّ الـ hook")
     elif opts.trim:
         # Asked for, but the clip is too short to give any away — say so rather
         # than let the user assume it happened.
@@ -264,7 +316,15 @@ def _build_plan(intensity: str, opts: EditOptions, info: dict) -> EditPlan:
     # asetrate shifts pitch AND tempo by `shift`; the follow-up atempo pulls the
     # net tempo back to `speed` so the audio stays locked to the video.
     af: list[str] = []
-    if opts.pitch and band.pitch > 0:
+    if opts.trending_audio:
+        # Shifting the pitch would stop the platform recognising the track, which
+        # costs the sound's discovery page — usually worth more than the extra
+        # evasion. Leave the audio matchable and say so.
+        af.append(f"atempo={speed}")
+        notes.append(
+            f"{LOW} الصوت بلا إزاحة — وضع «صوت رائج»: تبقى مرتبطاً بالمقطع "
+            f"الصوتي وتتنازل عن كسر بصمته")
+    elif opts.pitch and band.pitch > 0:
         magnitude = random.uniform(band.pitch * 0.8, band.pitch * 1.2)
         shift = 1 + magnitude if random.random() < 0.5 else 1 - magnitude
         af.append(f"asetrate={int(sample_rate * shift)}")

@@ -69,6 +69,10 @@ def settings_keyboard(job_id: str) -> InlineKeyboardMarkup:
     """
     Sub-menu opened by "Try Different Settings". Lets the admin toggle the
     optional surgical tweaks before re-rendering, then go back.
+
+    The 🔴/🟡/⚪ marks rate each toggle's effect on duplicate detection; the 🛡
+    row is the opposite trade — those two guards protect reach by *reducing*
+    evasion.
     """
     kb = InlineKeyboardBuilder()
     kb.row(
@@ -81,6 +85,13 @@ def settings_keyboard(job_id: str) -> InlineKeyboardMarkup:
     )
     kb.row(
         InlineKeyboardButton(text="🎨 تغيير الألوان ⚪",   callback_data=f"tog:{job_id}:color"),
+    )
+    # حماية الانتشار — تقلّل التخفّي عمداً مقابل إشارات الترتيب
+    kb.row(
+        InlineKeyboardButton(text="🎣 حماية الـ hook 🛡",
+                             callback_data=f"tog:{job_id}:protect_hook"),
+        InlineKeyboardButton(text="🎵 صوت رائج 🛡",
+                             callback_data=f"tog:{job_id}:trending_audio"),
     )
     kb.row(
         InlineKeyboardButton(text="▶️ إعادة المعالجة الآن", callback_data=f"variant:{job_id}"),

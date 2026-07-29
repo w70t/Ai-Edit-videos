@@ -48,7 +48,8 @@ INTENSITY_AR = {"light": "خفيف", "medium": "متوسط", "strong": "قوي",
                 "repost": "إعادة نشر"}
 # أسماء الخيارات بالعربي.
 OPTION_AR = {"flip": "العكس", "zoom": "التقريب والتأطير",
-             "color": "الألوان", "pitch": "طبقة الصوت", "trim": "القص الزمني"}
+             "color": "الألوان", "pitch": "طبقة الصوت", "trim": "القص الزمني",
+             "protect_hook": "حماية الـ hook", "trending_audio": "وضع الصوت الرائج"}
 
 
 async def _require_job(cq: CallbackQuery) -> JobRecord | None:
@@ -120,13 +121,15 @@ async def cb_settings(cq: CallbackQuery) -> None:
         return
     o = rec.options
     on, off = "مفعّل", "متوقف"
-    state = (f"قص زمني:{on if o.trim else off}  "
+    state = (f"قص:{on if o.trim else off}  "
              f"تقريب:{on if o.zoom else off}  "
              f"صوت:{on if o.pitch else off}  "
              f"عكس:{on if o.flip else off}  "
-             f"ألوان:{on if o.color else off}")
+             f"ألوان:{on if o.color else off}\n"
+             f"🛡 hook:{on if o.protect_hook else off}  "
+             f"صوت رائج:{on if o.trending_audio else off}")
     await cq.message.edit_reply_markup(reply_markup=settings_keyboard(rec.id))
-    await cq.answer(f"الحالي: {state}")
+    await cq.answer(f"الحالي:\n{state}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("tog:"))
