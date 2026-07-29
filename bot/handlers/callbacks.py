@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, FSInputFile
 from ..config import settings
 from ..filters import IsAdmin
 from ..keyboards import result_keyboard, settings_keyboard
+from ..services.editor import TOGGLEABLE, impact_label
 from ..services.processor import render_and_send
 from ..services.queue import Job, JobQueue
 from ..services.storage import JobRecord, store
@@ -43,10 +44,12 @@ def _arg(data: str) -> str:
 
 
 # أسماء شدّة التعديل بالعربي للعرض.
-INTENSITY_AR = {"light": "خفيف", "medium": "متوسط", "strong": "قوي"}
+INTENSITY_AR = {"light": "خفيف", "medium": "متوسط", "strong": "قوي",
+                "repost": "إعادة نشر"}
 # أسماء الخيارات بالعربي.
-OPTION_AR = {"flip": "العكس", "zoom": "التقريب",
-             "color": "الألوان", "pitch": "طبقة الصوت"}
+OPTION_AR = {"flip": "العكس", "zoom": "التقريب والتأطير",
+             "color": "الألوان", "pitch": "طبقة الصوت", "trim": "القص الزمني",
+             "protect_hook": "حماية الـ hook", "trending_audio": "وضع الصوت الرائج"}
 
 
 async def _require_job(cq: CallbackQuery) -> JobRecord | None:
@@ -88,7 +91,8 @@ async def cb_edit(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
     rec = await _require_job(cq)
     if not rec:
         return
-    rec.intensity = _arg(cq.data) or rec.intensity
+    # Picking a preset resets the option toggles to that preset's own set.
+    rec.apply_preset(_arg(cq.data) or rec.intensity)
     rec.variant_count = 0
     label = INTENSITY_AR.get(rec.intensity, rec.intensity)
     await cq.answer(f"جارٍ إعادة المعالجة بشدّة {label}…")
@@ -117,12 +121,15 @@ async def cb_settings(cq: CallbackQuery) -> None:
         return
     o = rec.options
     on, off = "مفعّل", "متوقف"
-    state = (f"عكس:{on if o.flip else off}  "
+    state = (f"قص:{on if o.trim else off}  "
              f"تقريب:{on if o.zoom else off}  "
-             f"ألوان:{on if o.color else off}  "
-             f"صوت:{on if o.pitch else off}")
+             f"صوت:{on if o.pitch else off}  "
+             f"عكس:{on if o.flip else off}  "
+             f"ألوان:{on if o.color else off}\n"
+             f"🛡 hook:{on if o.protect_hook else off}  "
+             f"صوت رائج:{on if o.trending_audio else off}")
     await cq.message.edit_reply_markup(reply_markup=settings_keyboard(rec.id))
-    await cq.answer(f"الحالي: {state}")
+    await cq.answer(f"الحالي:\n{state}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("tog:"))
@@ -131,8 +138,11 @@ async def cb_toggle(cq: CallbackQuery) -> None:
     if not rec:
         return
     which = _arg(cq.data)
+    if which not in TOGGLEABLE:      # never setattr() a name we didn't define
+        await cq.answer()
+        return
     o = rec.options
-    setattr(o, which, not getattr(o, which, False))
+    setattr(o, which, not getattr(o, which))
     name = OPTION_AR.get(which, which)
     await cq.answer(f"{name} → {'مفعّل' if getattr(o, which) else 'متوقف'}")
 
@@ -219,19 +229,28 @@ async def cb_info(cq: CallbackQuery) -> None:
     if not rec:
         return
     p = rec.probe or {}
-    dur = p.get("duration", 0)
+    dur = float(p.get("duration", 0) or 0)
     label = INTENSITY_AR.get(rec.intensity, rec.intensity)
-    info = (
-        "ℹ️ *معلومات المعالجة*\n"
-        f"• المهمة: `{rec.id}`\n"
-        f"• المصدر: {rec.origin[:60]}\n"
-        f"• الأبعاد: {p.get('width', '?')}×{p.get('height', '?')}\n"
-        f"• المدة: {dur:.1f} ثانية\n"
-        f"• الترميز: {p.get('codec', '?')}\n"
-        f"• الشدّة: {label}\n"
-        f"• عدد النسخ: {rec.variant_count}\n"
-        f"• آخر معالجة: {rec.last_render_seconds:.2f} ثانية\n"
-        f"• تسريع عتادي: {settings.hw_accel}"
-    )
-    await cq.message.answer(info, parse_mode="Markdown")
+    lines = [
+        "ℹ️ معلومات المعالجة",
+        f"• المهمة: {rec.id}",
+        f"• المصدر: {rec.origin[:60]}",
+        f"• الأبعاد: {p.get('width', '?')}×{p.get('height', '?')}",
+        f"• المدة الأصلية: {dur:.1f} ثانية",
+        f"• الترميز: {p.get('codec', '?')}",
+        f"• الشدّة: {label}",
+        f"• عدد النسخ: {rec.variant_count}",
+        f"• آخر معالجة: {rec.last_render_seconds:.2f} ثانية",
+        f"• تسريع عتادي: {settings.hw_accel}",
+    ]
+    if rec.edit_notes:
+        lines.append("")
+        lines.append(f"🎯 الأثر المتوقع: {impact_label(rec.edit_notes)}")
+        lines.append("ما طُبِّق فعلياً:")
+        lines.extend(f"  {n}" for n in rec.edit_notes)
+        lines.append("")
+        lines.append("🔴 يزيح البصمة الإدراكية · 🟡 جزئي · ⚪ تجميلي فقط")
+    # NOTE: no parse_mode — rec.origin is a raw URL and TikTok/Instagram links
+    # routinely contain _ and *, which make Telegram reject a Markdown message.
+    await cq.message.answer("\n".join(lines))
     await cq.answer()

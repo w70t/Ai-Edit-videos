@@ -20,10 +20,17 @@ from ..keyboards import result_keyboard
 from ..utils.cleanup import remove_path
 from ..utils.ffmpeg import make_thumbnail, probe
 from .dedup import registry
-from .editor import edit_video
+from .editor import edit_video, impact_label
 from .storage import JobRecord
 
 log = logging.getLogger(__name__)
+
+INTENSITY_LABEL = {
+    "light": "🟢 خفيف",
+    "medium": "🟡 متوسط",
+    "strong": "🔴 قوي",
+    "repost": "♻️ إعادة نشر",
+}
 
 
 def _caption(rec: JobRecord) -> str:
@@ -37,11 +44,15 @@ def _caption(rec: JobRecord) -> str:
         flags.append("ألوان")
     if o.pitch:
         flags.append("طبقة الصوت")
+    if o.trim:
+        flags.append("قص زمني")
     extras = (" · " + "، ".join(flags)) if flags else ""
-    label = {"light": "🟢 خفيف", "medium": "🟡 متوسط", "strong": "🔴 قوي"}.get(
-        rec.intensity, rec.intensity)
+    label = INTENSITY_LABEL.get(rec.intensity, rec.intensity)
     variant = f" · نسخة #{rec.variant_count}" if rec.variant_count else ""
-    return f"✅ تم — تعديل *{label}*{extras}{variant}"
+    # Say plainly how much this render is expected to matter — a green tick
+    # alone would imply more than a cosmetic pass actually achieves.
+    verdict = f"\n🎯 أثر متوقع على كشف التكرار: {impact_label(rec.edit_notes)}"
+    return f"✅ تم — تعديل *{label}*{extras}{variant}{verdict}"
 
 
 async def render_and_send(
@@ -81,9 +92,22 @@ async def render_and_send(
         intensity=rec.intensity,
         opts=rec.options,
         hw=(settings.hw_accel != "off"),
+        info=rec.probe,          # reuse the probe above instead of running it twice
     )
     rec.output = result.output
+    rec.edit_notes = result.plan.notes
     rec.last_render_seconds = round(time.monotonic() - started, 2)
+
+    # A link download may be far larger than anything we can send back: the Bot
+    # API caps uploads at 50 MB. Only the finished render tells us the real
+    # size, so check here and fail with a straight answer rather than letting
+    # send_video throw something opaque.
+    out_mb = rec.output.stat().st_size / (1024 * 1024)
+    if out_mb > settings.max_outgoing_mb:
+        raise RuntimeError(
+            f"النسخة المعدّلة {out_mb:.0f} ميجابايت، وحد الإرسال في تيليجرام "
+            f"{settings.max_outgoing_mb} ميجابايت. جرّب مقطعاً أقصر، أو شغّل "
+            f"Bot API server محلياً واضبط TELEGRAM_LOCAL_API=true.")
 
     # Probe the OUTPUT (not the source) so Telegram gets the correct dimensions
     # of the edited file — this is what stops vertical clips showing in a square

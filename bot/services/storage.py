@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .editor import EditOptions
+from .editor import EditOptions, preset_options
 
 
 @dataclass
@@ -37,6 +37,13 @@ class JobRecord:
     last_render_seconds: float = 0.0
     probe: dict = field(default_factory=dict)
     variant_count: int = 0
+    # What the last render actually did, in the user's words.
+    edit_notes: list[str] = field(default_factory=list)
+
+    def apply_preset(self, intensity: str) -> None:
+        """Switch to a preset — sets both the intensity and its option set."""
+        self.intensity = intensity
+        self.options = preset_options(intensity)
 
 
 class JobStore:

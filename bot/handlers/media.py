@@ -99,7 +99,7 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         rec.source = await downloader.download(
             url, rec.work_dir, settings.max_video_mb)
-        rec.intensity = settings.default_intensity
+        rec.apply_preset(settings.default_intensity)
     except Exception as exc:
         log.warning("download failed: %s", exc)
         remove_path(rec.work_dir)
@@ -169,11 +169,24 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     if media is None:
         return
 
+    # Telegram's getFile caps what a bot may download at 20 MB on the public
+    # API — well under MAX_VIDEO_MB. Check the real limit up front so an
+    # oversized upload gets a straight answer instead of an opaque failure
+    # halfway through bot.download().
     size_mb = (getattr(media, "file_size", 0) or 0) / (1024 * 1024)
-    if size_mb > settings.max_video_mb:
+    limit = min(settings.max_video_mb, settings.max_incoming_mb)
+    if size_mb > limit:
+        note = (
+            "\n\nهذا حدّ تفرضه واجهة تيليجرام على البوتات، لا إعداد عندنا. "
+            "الحلول:\n"
+            "• أرسل **رابط** الفيديو بدل رفعه — التحميل عبر الرابط لا يمرّ "
+            f"بهذا الحد (حتى {settings.max_video_mb} ميجابايت)\n"
+            "• أو شغّل Bot API server محلياً واضبط `TELEGRAM_LOCAL_API=true`"
+        ) if not settings.telegram_local_api else ""
         await message.answer(
             f"⚠️ حجم الملف {size_mb:.0f} ميجابايت — أكبر من الحد المسموح "
-            f"({settings.max_video_mb} ميجابايت).")
+            f"({limit} ميجابايت).{note}",
+            parse_mode="Markdown")
         return
 
     origin = _origin_label(message)
@@ -185,7 +198,7 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         await bot.download(media, destination=dest)
         rec.source = dest
-        rec.intensity = settings.default_intensity
+        rec.apply_preset(settings.default_intensity)
     except Exception as exc:
         log.warning("media download failed: %s", exc)
         remove_path(rec.work_dir)
