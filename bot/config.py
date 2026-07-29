@@ -51,7 +51,11 @@ class Settings:
 
     # --- Processing limits ---
     max_concurrent_jobs: int = _int("MAX_CONCURRENT_JOBS", 1)
+    # Cap for link downloads (yt-dlp). Telegram uploads are additionally bound
+    # by the Bot API limits below, which are much lower and not ours to raise.
     max_video_mb: int = _int("MAX_VIDEO_MB", 300)
+    # Running your own Bot API server lifts both limits to 2000 MB.
+    telegram_local_api: bool = _bool("TELEGRAM_LOCAL_API", False)
     default_intensity: str = os.getenv("DEFAULT_INTENSITY", "repost").strip().lower()
 
     # --- Hardware ---
@@ -69,6 +73,19 @@ class Settings:
         os.getenv("WORK_DIR", "/tmp/ai-edit-videos")).expanduser())
     save_dir: Path = field(default_factory=lambda: Path(
         os.getenv("SAVE_DIR", "./saved")).expanduser())
+
+    # --- Telegram Bot API hard limits (megabytes) --------------------------
+    # getFile caps downloads at 20 MB and sendVideo caps uploads at 50 MB on the
+    # public API. These are server-side; no setting on our end changes them.
+    @property
+    def max_incoming_mb(self) -> int:
+        """Largest file the bot can download FROM Telegram."""
+        return 2000 if self.telegram_local_api else 20
+
+    @property
+    def max_outgoing_mb(self) -> int:
+        """Largest file the bot can send TO Telegram."""
+        return 2000 if self.telegram_local_api else 50
 
     def validate(self) -> None:
         """Fail fast with a clear message if the bot can't possibly run."""

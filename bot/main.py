@@ -20,7 +20,8 @@ from .config import settings
 from .handlers import build_router
 from .services.queue import JobQueue
 from .utils.cleanup import periodic_sweep
-from .utils.ffmpeg import ffmpeg_available, has_v4l2_decoder
+from .utils.ffmpeg import (available_hwaccels, ffmpeg_available,
+                           has_v4l2_decoder, resolve_hwaccel)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,8 +39,17 @@ async def main() -> None:
 
     log.info("admin id: %s", settings.admin_id)
     log.info("work dir: %s | save dir: %s", settings.work_dir, settings.save_dir)
-    log.info("hw accel: %s (v4l2 decoder present: %s)",
-             settings.hw_accel, has_v4l2_decoder())
+    log.info("telegram limits: %d MB in / %d MB out%s",
+             settings.max_incoming_mb, settings.max_outgoing_mb,
+             " (local Bot API server)" if settings.telegram_local_api else "")
+
+    # Resolve hardware decode ONCE here, so a machine with no usable path never
+    # pays for a failed render plus a software retry on every job.
+    log.info("hw accel: setting=%s | ffmpeg offers: %s | v4l2m2m decoder built in: %s",
+             settings.hw_accel,
+             ", ".join(sorted(available_hwaccels())) or "none",
+             has_v4l2_decoder())
+    await resolve_hwaccel(settings.hw_accel)
 
     bot = Bot(
         token=settings.bot_token,

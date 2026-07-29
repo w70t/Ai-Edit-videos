@@ -448,8 +448,11 @@ async def edit_video(
                         stderr.decode("utf-8", "ignore")[-400:])
         return proc.returncode
 
+    # Only worth retrying if the first attempt actually used a hardware path;
+    # otherwise the "fallback" would rerun the identical command.
+    used_hw = bool(hw_decode_args(hw))
     rc = await _run(hw)
-    if rc != 0 and hw:
+    if rc != 0 and used_hw:
         log.info("retrying render in software mode")
         rc = await _run(False)
 

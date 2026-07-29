@@ -98,6 +98,17 @@ async def render_and_send(
     rec.edit_notes = result.plan.notes
     rec.last_render_seconds = round(time.monotonic() - started, 2)
 
+    # A link download may be far larger than anything we can send back: the Bot
+    # API caps uploads at 50 MB. Only the finished render tells us the real
+    # size, so check here and fail with a straight answer rather than letting
+    # send_video throw something opaque.
+    out_mb = rec.output.stat().st_size / (1024 * 1024)
+    if out_mb > settings.max_outgoing_mb:
+        raise RuntimeError(
+            f"النسخة المعدّلة {out_mb:.0f} ميجابايت، وحد الإرسال في تيليجرام "
+            f"{settings.max_outgoing_mb} ميجابايت. جرّب مقطعاً أقصر، أو شغّل "
+            f"Bot API server محلياً واضبط TELEGRAM_LOCAL_API=true.")
+
     # Probe the OUTPUT (not the source) so Telegram gets the correct dimensions
     # of the edited file — this is what stops vertical clips showing in a square
     # box and lets the phone offer "Save to Gallery".
