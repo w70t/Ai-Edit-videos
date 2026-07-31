@@ -23,6 +23,7 @@ from ..filters import IsAdmin
 from ..keyboards import (BTN_FORGET, BTN_HELP, BTN_RESEARCH, BTN_STATUS,
                          confirm_forget_keyboard, main_menu)
 from ..services.dedup import registry
+from ..services.prefs import prefs
 from ..services.queue import JobQueue
 from ..services.research import research
 
@@ -40,7 +41,10 @@ WELCOME = (
     "🛑 *ما أعدّل على الفيديو مباشرة*: أول ما يوصل الفيديو أسألك تختار الشدّة "
     "(♻️ إعادة نشر / 🔴 قوي / 🟡 متوسط / 🟢 خفيف)، وما يبدأ أي تعديل قبل "
     "اختيارك — وتقدر تلغي.\n\n"
-    "👇 *استخدم الأزرار تحت* — ما تحتاج تكتب أي أمر.\n\n"
+    "👇 *استخدم الأزرار تحت* — ما تحتاج تكتب أي أمر ولا تعدّل أي ملف:\n"
+    "• ⚙️ *الإعدادات* — تغيّر سلوك البوت بضغطة زر (يسأل قبل التعديل، تخطّي "
+    "المكرر، الوضع الافتراضي).\n"
+    "• ❔ *شرح الأزرار* — كل زر يشرح لك بالضبط وش يسوي.\n\n"
     "_تلميح: الملفات فوق 20 ميجابايت لا يسمح تيليجرام للبوتات بتحميلها — "
     "أرسل الرابط بدل الملف._"
 )
@@ -54,15 +58,15 @@ async def cmd_start(message: Message) -> None:
 
 @router.message(or_f(Command("status"), F.text == BTN_STATUS))
 async def cmd_status(message: Message, queue: JobQueue) -> None:
-    dedup_state = "مُفعّل ✅" if settings.skip_duplicates else "معطّل ⛔"
-    ask_state = ("يسأل قبل التعديل ✅" if settings.confirm_before_edit
+    dedup_state = "مُفعّل ✅" if prefs.skip_duplicates else "معطّل ⛔"
+    ask_state = ("يسأل قبل التعديل ✅" if prefs.confirm_before_edit
                  else "يعدّل مباشرة ⚡")
     await message.answer(
         f"📊 *الحالة*\n"
         f"• مهام في الانتظار: *{queue.pending}*\n"
         f"• تخطّي المكرر: {dedup_state} (مسجّل: *{registry.count()}*)\n"
         f"• التأكيد: {ask_state}\n"
-        f"• الوضع الافتراضي: *{settings.default_intensity}*\n"
+        f"• الوضع الافتراضي: *{prefs.default_intensity}*\n"
         f"• حدود تيليجرام: *{settings.max_incoming_mb}* ميجا استلام / "
         f"*{settings.max_outgoing_mb}* ميجا إرسال\n"
         f"• البوت: يعمل ✅",

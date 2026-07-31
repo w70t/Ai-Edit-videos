@@ -22,6 +22,7 @@ from ..filters import IsAdmin
 from ..keyboards import confirm_keyboard
 from ..services import downloader
 from ..services.dedup import hash_file, registry
+from ..services.prefs import prefs
 from ..services.processor import submit_render
 from ..services.queue import JobQueue
 from ..services.storage import JobRecord, store
@@ -71,7 +72,7 @@ async def _is_duplicate(rec: JobRecord, status_msg: Message) -> bool:
     the record (it is committed to the registry only after a successful render)
     and return False.
     """
-    if not settings.skip_duplicates or rec.source is None:
+    if not prefs.skip_duplicates or rec.source is None:
         return False
 
     # Hashing is blocking disk I/O — keep it off the event loop.
@@ -132,7 +133,7 @@ async def _ask_or_render(
     The confirmation screen probes the source first — the numbers it shows are
     the same ones the render will reuse, so this costs nothing extra.
     """
-    if not settings.confirm_before_edit:
+    if not prefs.confirm_before_edit:
         await submit_render(bot, queue, rec, status_msg.chat.id,
                             status_msg.message_id, drop_on_error=True)
         return
@@ -161,7 +162,7 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         rec.source = await downloader.download(
             url, rec.work_dir, settings.max_video_mb)
-        rec.apply_preset(settings.default_intensity)
+        rec.apply_preset(prefs.default_intensity)
     except Exception as exc:
         log.warning("download failed: %s", exc)
         remove_path(rec.work_dir)
@@ -250,7 +251,7 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         await bot.download(media, destination=dest)
         rec.source = dest
-        rec.apply_preset(settings.default_intensity)
+        rec.apply_preset(prefs.default_intensity)
     except Exception as exc:
         log.warning("media download failed: %s", exc)
         remove_path(rec.work_dir)

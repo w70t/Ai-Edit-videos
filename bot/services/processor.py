@@ -21,6 +21,7 @@ from ..utils.cleanup import remove_path
 from ..utils.ffmpeg import make_thumbnail, probe
 from .dedup import registry
 from .editor import edit_video, impact_label
+from .prefs import prefs
 from .queue import Job, JobQueue
 from .storage import JobRecord, store
 
@@ -149,7 +150,7 @@ async def render_and_send(
 
     # Only now that the render succeeded and was delivered do we remember the
     # source hash — a failed/partial job must not poison future inputs.
-    if settings.skip_duplicates and rec.source_hash:
+    if prefs.skip_duplicates and rec.source_hash:
         registry.remember(rec.source_hash, rec.origin)
 
     log.info("job %s rendered in %.2fs (%s) %dx%d",

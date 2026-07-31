@@ -20,6 +20,7 @@ from ..config import settings
 from ..filters import IsAdmin
 from ..keyboards import confirm_keyboard, result_keyboard, settings_keyboard
 from ..services.editor import TOGGLEABLE, impact_label
+from ..services.prefs import prefs
 from ..services.processor import submit_render
 from ..services.queue import JobQueue
 from ..services.storage import JobRecord, store
@@ -101,7 +102,7 @@ async def cb_go(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
     if rec.started:
         await cq.answer("جارٍ العمل على هذه المهمة أصلاً…")
         return
-    rec.apply_preset(_arg(cq.data) or settings.default_intensity)
+    rec.apply_preset(_arg(cq.data) or prefs.default_intensity)
     label = INTENSITY_AR.get(rec.intensity, rec.intensity)
     await cq.answer(f"بدأ التعديل بشدّة {label}…")
     await _start_first_render(cq, bot, queue, rec,

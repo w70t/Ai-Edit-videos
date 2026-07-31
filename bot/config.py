@@ -71,6 +71,12 @@ class Settings:
     dedup_db: Path = field(default_factory=lambda: Path(
         os.getenv("DEDUP_DB", "./dedup.json")).expanduser())
 
+    # --- Runtime preferences ------------------------------------------------
+    # The ⚙️ panel inside Telegram writes the admin's choices here; they
+    # override the .env values above. See services/prefs.py.
+    prefs_db: Path = field(default_factory=lambda: Path(
+        os.getenv("PREFS_DB", "./prefs.json")).expanduser())
+
     # --- Storage ---
     work_dir: Path = field(default_factory=lambda: Path(
         os.getenv("WORK_DIR", "/tmp/ai-edit-videos")).expanduser())

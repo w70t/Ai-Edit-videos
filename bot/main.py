@@ -78,6 +78,8 @@ async def main() -> None:
         await bot.set_my_commands([
             BotCommand(command="start", description="البداية وإظهار الأزرار"),
             BotCommand(command="status", description="حالة الطابور والنظام"),
+            BotCommand(command="settings", description="الإعدادات (بدون ملفات)"),
+            BotCommand(command="guide", description="شرح كل زر ووش يسوي"),
             BotCommand(command="research", description="آخر أساليب كشف التكرار"),
             BotCommand(command="forget", description="مسح سجل تخطّي المكرر"),
         ])
