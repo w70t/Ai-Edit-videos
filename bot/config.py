@@ -51,9 +51,12 @@ class Settings:
 
     # --- Processing limits ---
     max_concurrent_jobs: int = _int("MAX_CONCURRENT_JOBS", 1)
-    # Cap for link downloads (yt-dlp). Telegram uploads are additionally bound
-    # by the Bot API limits below, which are much lower and not ours to raise.
-    max_video_mb: int = _int("MAX_VIDEO_MB", 300)
+    # Absolute ceiling for link downloads (yt-dlp), whatever quality tier is
+    # picked. The per-tier caps in services.quality are clamped to this, so
+    # raising a tier can never blow past what the disk can hold. Telegram
+    # uploads are additionally bound by the Bot API limits below, which are
+    # much lower and not ours to raise.
+    max_video_mb: int = _int("MAX_VIDEO_MB", 2000)
     # Running your own Bot API server lifts both limits to 2000 MB.
     telegram_local_api: bool = _bool("TELEGRAM_LOCAL_API", False)
     default_intensity: str = os.getenv("DEFAULT_INTENSITY", "repost").strip().lower()
@@ -67,6 +70,12 @@ class Settings:
     # Where the persistent hash registry is stored (survives restarts).
     dedup_db: Path = field(default_factory=lambda: Path(
         os.getenv("DEDUP_DB", "./dedup.json")).expanduser())
+
+    # --- Access control ----------------------------------------------------
+    # Who may use the bot, and who may pick a quality above 1080p. Managed
+    # entirely from the admin's buttons — this is only where the file lives.
+    users_db: Path = field(default_factory=lambda: Path(
+        os.getenv("USERS_DB", "./users.json")).expanduser())
 
     # --- Storage ---
     work_dir: Path = field(default_factory=lambda: Path(

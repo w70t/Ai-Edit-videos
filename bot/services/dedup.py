@@ -11,6 +11,11 @@ catches the same file re-uploaded / re-forwarded, and the same link sent twice
 when the download is byte-identical. It is NOT a perceptual matcher — a clip
 re-encoded, trimmed, or downloaded in a different format will hash differently
 and be treated as new.
+
+Records are scoped **per user**. Two people are allowed to post the same clip;
+one of them being told "already processed" for a video they never sent would be
+a bug, not a feature. The user id is folded into the stored key, so the file
+format stays a flat dict and pruning keeps working unchanged.
 """
 
 from __future__ import annotations
@@ -65,9 +70,13 @@ class DuplicateRegistry:
         except OSError as exc:
             log.warning("could not write dedup registry %s: %s", self._path, exc)
 
-    def seen(self, digest: str) -> dict | None:
-        """Return the stored record for a digest, or None if never processed."""
-        return self._seen.get(digest)
+    @staticmethod
+    def _key(digest: str, user_id: int) -> str:
+        return f"{user_id}:{digest}"
+
+    def seen(self, digest: str, user_id: int) -> dict | None:
+        """Return this user's record for a digest, or None if never processed."""
+        return self._seen.get(self._key(digest, user_id))
 
     def count(self) -> int:
         """How many distinct sources have been processed."""
@@ -80,11 +89,13 @@ class DuplicateRegistry:
         self._save()
         return n
 
-    def remember(self, digest: str, origin: str = "") -> None:
-        """Record a digest as processed and persist to disk."""
+    def remember(self, digest: str, user_id: int, origin: str = "") -> None:
+        """Record a digest as processed for this user and persist to disk."""
         if not digest:
             return
-        self._seen[digest] = {"first_seen": time.time(), "origin": origin}
+        self._seen[self._key(digest, user_id)] = {
+            "first_seen": time.time(), "origin": origin, "user": user_id,
+        }
         self._prune()
         self._save()
 

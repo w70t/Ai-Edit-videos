@@ -19,9 +19,11 @@ from ..config import settings
 from ..keyboards import result_keyboard
 from ..utils.cleanup import remove_path
 from ..utils.ffmpeg import make_thumbnail, probe
+from . import downloader, quality
 from .dedup import registry
 from .editor import edit_video, impact_label
 from .storage import JobRecord
+from .users import registry as users
 
 log = logging.getLogger(__name__)
 
@@ -49,10 +51,29 @@ def _caption(rec: JobRecord) -> str:
     extras = (" · " + "، ".join(flags)) if flags else ""
     label = INTENSITY_LABEL.get(rec.intensity, rec.intensity)
     variant = f" · نسخة #{rec.variant_count}" if rec.variant_count else ""
+    tier = quality.get(rec.quality)
     # Say plainly how much this render is expected to matter — a green tick
     # alone would imply more than a cosmetic pass actually achieves.
     verdict = f"\n🎯 أثر متوقع على كشف التكرار: {impact_label(rec.edit_notes)}"
-    return f"✅ تم — تعديل *{label}*{extras}{variant}{verdict}"
+    return (f"✅ تم — تعديل *{label}*{extras}{variant}\n"
+            f"🎚 الجودة: *{tier.label}*{verdict}")
+
+
+async def refetch_source(rec: JobRecord) -> None:
+    """
+    Re-download a link job's source at `rec.quality`.
+
+    Only meaningful for links: a Telegram upload is already the compressed copy
+    Telegram handed us, and no tier can conjure back pixels it never sent.
+    """
+    if not rec.from_link:
+        return
+    if rec.source and rec.source.exists():
+        remove_path(rec.source)
+    rec.source = await downloader.download(rec.origin, rec.work_dir, rec.quality)
+    # The file changed, so every cached fact about it is stale.
+    rec.probe = {}
+    rec.source_hash = ""
 
 
 async def render_and_send(
@@ -93,6 +114,7 @@ async def render_and_send(
         opts=rec.options,
         hw=(settings.hw_accel != "off"),
         info=rec.probe,          # reuse the probe above instead of running it twice
+        quality=rec.quality,     # decides CRF / preset / audio bitrate
     )
     rec.output = result.output
     rec.edit_notes = result.plan.notes
@@ -104,10 +126,17 @@ async def render_and_send(
     # send_video throw something opaque.
     out_mb = rec.output.stat().st_size / (1024 * 1024)
     if out_mb > settings.max_outgoing_mb:
+        tier = quality.get(rec.quality)
+        # The most likely cause by far is a high tier, and the fix is one
+        # button away — say so before mentioning the server-side workaround.
+        hint = ("اضغط 🎚 الجودة واختر 1080p — الجودة العالية تنتج ملفات أكبر "
+                "بكثير من حد تيليجرام."
+                if tier.gated else
+                "جرّب مقطعاً أقصر، أو شغّل Bot API server محلياً واضبط "
+                "TELEGRAM_LOCAL_API=true.")
         raise RuntimeError(
-            f"النسخة المعدّلة {out_mb:.0f} ميجابايت، وحد الإرسال في تيليجرام "
-            f"{settings.max_outgoing_mb} ميجابايت. جرّب مقطعاً أقصر، أو شغّل "
-            f"Bot API server محلياً واضبط TELEGRAM_LOCAL_API=true.")
+            f"النسخة المعدّلة {out_mb:.0f} ميجابايت بجودة «{tier.label}»، "
+            f"وحد الإرسال في تيليجرام {settings.max_outgoing_mb} ميجابايت.\n{hint}")
 
     # Probe the OUTPUT (not the source) so Telegram gets the correct dimensions
     # of the edited file — this is what stops vertical clips showing in a square
@@ -142,14 +171,16 @@ async def render_and_send(
         height=height or None,
         duration=duration or None,
         thumbnail=thumb,
-        reply_markup=result_keyboard(rec.id),
+        reply_markup=result_keyboard(rec.id, rec.quality,
+                                     users.is_admin(rec.user_id)),
     )
     rec.result_message_id = sent.message_id
 
     # Only now that the render succeeded and was delivered do we remember the
     # source hash — a failed/partial job must not poison future inputs.
     if settings.skip_duplicates and rec.source_hash:
-        registry.remember(rec.source_hash, rec.origin)
+        registry.remember(rec.source_hash, rec.user_id, rec.origin)
 
-    log.info("job %s rendered in %.2fs (%s) %dx%d",
-             rec.id, rec.last_render_seconds, rec.intensity, width, height)
+    log.info("job %s rendered in %.2fs (%s/%s) %dx%d for %s",
+             rec.id, rec.last_render_seconds, rec.intensity, rec.quality,
+             width, height, rec.user_id)

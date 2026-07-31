@@ -16,18 +16,19 @@ from aiogram import Bot, F, Router
 from aiogram.types import Message
 
 from ..config import settings
-from ..filters import IsAdmin
-from ..services import downloader
+from ..filters import IsAllowed
+from ..services import downloader, quality
 from ..services.dedup import hash_file, registry
 from ..services.processor import render_and_send
 from ..services.queue import Job, JobQueue
 from ..services.storage import JobRecord, store
+from ..services.users import registry as users
 from ..utils.cleanup import remove_path
 
 log = logging.getLogger(__name__)
 
 router = Router(name="media")
-router.message.filter(IsAdmin())
+router.message.filter(IsAllowed())
 
 
 def _too_big_message(size_mb: float) -> str:
@@ -50,7 +51,7 @@ def _too_big_message(size_mb: float) -> str:
         "",
         "الحل:",
         "• أرسل *رابط* الفيديو بدل الملف — التحميل عبر الرابط لا يمرّ بهذا "
-        f"الحد إطلاقاً (حتى {settings.max_video_mb} ميجابايت).",
+        "الحد إطلاقاً، ويصل لسقف الجودة المختارة.",
     ]
     if not settings.telegram_local_api:
         lines.append(
@@ -72,7 +73,7 @@ async def _is_duplicate(rec: JobRecord, status_msg: Message) -> bool:
 
     # Hashing is blocking disk I/O — keep it off the event loop.
     digest = await asyncio.to_thread(hash_file, rec.source)
-    prev = registry.seen(digest)
+    prev = registry.seen(digest, rec.user_id)
     if prev is not None:
         remove_path(rec.work_dir)
         store.drop(rec.id)
@@ -123,12 +124,17 @@ async def _enqueue_render(
 @router.message(F.text.func(downloader.is_url))
 async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     url = downloader.extract_url(message.text)
-    status = await message.answer("⬇️ جارٍ تحميل الفيديو من الرابط…")
+    uid = message.from_user.id
+    # Their remembered tier, already downgraded by the registry if the grant
+    # was revoked since they last chose.
+    tier = quality.get(users.default_quality(uid))
+    status = await message.answer(
+        f"⬇️ جارٍ تحميل الفيديو من الرابط… ({tier.label})")
 
-    rec = store.new(settings.work_dir, message.chat.id, origin=url)
+    rec = store.new(settings.work_dir, message.chat.id, origin=url,
+                    user_id=uid, quality=tier.key)
     try:
-        rec.source = await downloader.download(
-            url, rec.work_dir, settings.max_video_mb)
+        rec.source = await downloader.download(url, rec.work_dir, rec.quality)
         rec.apply_preset(settings.default_intensity)
     except Exception as exc:
         log.warning("download failed: %s", exc)
@@ -213,7 +219,11 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     verb = "جارٍ استيراد الفيديو المحوّل" if origin != UPLOAD_ORIGIN else "جارٍ استلام الفيديو"
     status = await message.answer(f"⬇️ {verb}…")
 
-    rec = store.new(settings.work_dir, message.chat.id, origin=origin)
+    uid = message.from_user.id
+    # An upload cannot be re-fetched at a higher resolution — Telegram already
+    # compressed it — so the tier here only steers the encode.
+    rec = store.new(settings.work_dir, message.chat.id, origin=origin,
+                    user_id=uid, quality=users.default_quality(uid))
     dest = rec.work_dir / "source.mp4"
     try:
         await bot.download(media, destination=dest)

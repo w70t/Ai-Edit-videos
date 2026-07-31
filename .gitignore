@@ -13,6 +13,9 @@ venv/
 saved/
 dedup.json
 dedup.json.tmp
+# The allowlist holds real Telegram user ids — never commit it.
+users.json
+users.json.tmp
 *.mp4
 *.mkv
 *.webm

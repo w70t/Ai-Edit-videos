@@ -43,6 +43,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..utils.ffmpeg import hw_decode_args, probe
+from .quality import Quality, level_for
+from .quality import get as get_tier
 
 log = logging.getLogger(__name__)
 
@@ -138,6 +140,9 @@ class EditPlan:
     out_duration: float          # 0 = no explicit -t
     tag: str                     # fresh metadata comment (computed once)
     created_iso: str             # fresh creation_time (computed once)
+    out_width: int = 0           # with out_height, decides the H.264 level tag
+    out_height: int = 0          # (0 = ffprobe told us nothing)
+    audio_rate: int = 44100      # output sample rate
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -248,6 +253,11 @@ def _build_plan(intensity: str, opts: EditOptions, info: dict) -> EditPlan:
     duration = float(info.get("duration") or 0.0)
     # Fall back only when ffprobe genuinely gave us nothing.
     sample_rate = int(info.get("sample_rate") or 0) or 44100
+    # Keep the source rate when it is already a standard one. Resampling 48kHz
+    # (most TikTok / Reels audio) down to 44.1kHz is a quality loss that buys
+    # nothing — both are rates iOS Photos imports happily. Anything exotic
+    # still normalises to 44.1kHz so the import never breaks.
+    audio_rate = sample_rate if sample_rate in (44100, 48000) else 44100
 
     vf: list[str] = []
     notes: list[str] = []
@@ -345,6 +355,11 @@ def _build_plan(intensity: str, opts: EditOptions, info: dict) -> EditPlan:
         out_duration=out_duration,
         tag=f"v{random.randint(1000, 9999)}",
         created_iso=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000Z"),
+        # The filter chain scales back to the source size, so the output frame
+        # is the source frame — that is what the level tag has to satisfy.
+        out_width=_even(width) if width >= 2 else 0,
+        out_height=_even(height) if height >= 2 else 0,
+        audio_rate=audio_rate,
         notes=notes,
     )
 
@@ -360,7 +375,8 @@ def impact_label(notes: list[str]) -> str:
 
 
 def _build_command(
-    src: Path, dst: Path, plan: EditPlan, hw: bool, has_audio: bool
+    src: Path, dst: Path, plan: EditPlan, hw: bool, has_audio: bool,
+    tier: Quality,
 ) -> list[str]:
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -379,20 +395,25 @@ def _build_command(
 
     # Apply audio filters / re-encode only when the source actually has audio
     # (video notes, GIFs and some clips don't) — otherwise drop audio with -an.
-    # Force standard stereo 44.1kHz AAC-LC: iOS Photos rejects odd sample rates.
+    # Stereo AAC-LC at the plan's rate: iOS Photos rejects odd sample rates.
     if has_audio:
-        cmd += ["-af", plan.af, "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
+        cmd += ["-af", plan.af,
+                "-c:a", "aac", "-b:a", tier.audio_bitrate,
+                "-ar", str(plan.audio_rate), "-ac", "2"]
     else:
         cmd += ["-an"]
 
     cmd += [
         # software H.264 encode — reliable on Pi 5, good for short social clips.
         "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        # Explicit iOS-friendly profile/level (broad device compatibility).
+        # Speed/quality come from the tier the user picked with a button.
+        "-preset", tier.preset,
+        "-crf", str(tier.crf),
+        # Explicit iOS-friendly profile, and a level the stream can actually
+        # satisfy: 4.0 tops out near 1080p, so tagging a 4K render with it
+        # would be a lie some players refuse to play.
         "-profile:v", "high",
-        "-level", "4.0",
+        "-level", level_for(plan.out_width, plan.out_height),
         "-pix_fmt", "yuv420p",
         # Force a CONSTANT frame rate. Social clips are often VFR, and iOS Photos
         # refuses to import VFR video even when Telegram shows the save option.
@@ -413,18 +434,21 @@ async def edit_video(
     opts: EditOptions | None = None,
     hw: bool = True,
     info: dict | None = None,
+    quality: str = "",
 ) -> EditResult:
     """
     Render an edited copy of `src` into `out_dir` and return an EditResult.
 
     `info` is an ffprobe dict for the source; pass the cached one to avoid
-    probing twice. Falls back to pure software decoding automatically if a
+    probing twice. `quality` names the tier whose CRF / preset / audio bitrate
+    the encode uses. Falls back to pure software decoding automatically if a
     hardware-accelerated attempt fails.
     """
     opts = opts or EditOptions()
     if info is None:
         info = await probe(str(src))
 
+    tier = get_tier(quality)
     plan = _build_plan(intensity, opts, info)
     has_audio = bool(info.get("has_audio", True))
     dst = out_dir / f"edited_{intensity}_{random.randint(1000, 9999)}.mp4"
@@ -436,7 +460,7 @@ async def edit_video(
         # Rebuilt per attempt only to swap the hwaccel flags — the plan (and so
         # the filters, trim and metadata) is identical, so `executed` is always
         # the command that actually produced the file.
-        executed = _build_command(src, dst, plan, use_hw, has_audio)
+        executed = _build_command(src, dst, plan, use_hw, has_audio, tier)
         proc = await asyncio.create_subprocess_exec(
             *executed,
             stdout=asyncio.subprocess.DEVNULL,

@@ -16,6 +16,9 @@ from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, ReplyKeyboardMarkup)
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
+from .services import quality as q
+from .services.users import UserEntry
+
 # --------------------------------------------------------------------------- #
 #  Persistent menu
 #
@@ -25,22 +28,30 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 BTN_STATUS = "📊 الحالة"
 BTN_RESEARCH = "🔎 بحث"
 BTN_FORGET = "🧹 مسح سجل المكرر"
+BTN_USERS = "👥 المستخدمون"
 BTN_HELP = "ℹ️ مساعدة"
 
-MENU_BUTTONS = (BTN_STATUS, BTN_RESEARCH, BTN_FORGET, BTN_HELP)
+MENU_BUTTONS = (BTN_STATUS, BTN_RESEARCH, BTN_FORGET, BTN_USERS, BTN_HELP)
+# Buttons only the owner ever sees. Handlers re-check permission anyway — a
+# hidden button is a courtesy, not a security boundary.
+ADMIN_ONLY_BUTTONS = (BTN_RESEARCH, BTN_FORGET, BTN_USERS)
 
 
-def main_menu() -> ReplyKeyboardMarkup:
+def main_menu(is_admin: bool = True) -> ReplyKeyboardMarkup:
     """
     The always-on menu under the message box.
 
     `is_persistent` keeps it open instead of collapsing behind the little
-    keyboard icon, which is the whole point — the admin should never have to
-    remember a command name.
+    keyboard icon, which is the whole point — nobody should have to remember
+    a command name. Guests get the two entries that are theirs to use.
     """
     kb = ReplyKeyboardBuilder()
-    kb.row(KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_RESEARCH))
-    kb.row(KeyboardButton(text=BTN_FORGET), KeyboardButton(text=BTN_HELP))
+    if is_admin:
+        kb.row(KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_RESEARCH))
+        kb.row(KeyboardButton(text=BTN_FORGET), KeyboardButton(text=BTN_USERS))
+        kb.row(KeyboardButton(text=BTN_HELP))
+    else:
+        kb.row(KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_HELP))
     return kb.as_markup(
         resize_keyboard=True,
         is_persistent=True,
@@ -58,7 +69,8 @@ def confirm_forget_keyboard() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
+def result_keyboard(job_id: str, quality: str = q.STANDARD,
+                    is_admin: bool = True) -> InlineKeyboardMarkup:
     """
     The main control panel shown *under every finished video*.
 
@@ -68,11 +80,13 @@ def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
             [Repost Mode]
         Row 1 – Edit Intensity
             [Light Edit] [Medium Edit] [Strong Edit]
-        Row 2 – Variants
+        Row 2 – Quality (opens the tier picker)
+            [Quality: 1080p]
+        Row 3 – Variants
             [Generate New Variant] [Try Different Settings]
-        Row 3 – Actions
+        Row 4 – Actions (admin only: they write to the admin's disk/channel)
             [Save to Folder] [Forward to Channel] [Delete this version]
-        Row 4 – Quick Options
+        Row 5 – Quick Options
             [Download Original] [Show Processing Info]
     """
     kb = InlineKeyboardBuilder()
@@ -90,25 +104,123 @@ def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🔴 تعديل قوي",   callback_data=f"edit:{job_id}:strong"),
     )
 
-    # الصف 2 — النسخ
+    # الصف 2 — الجودة (يفتح قائمة المستويات)
+    kb.row(
+        InlineKeyboardButton(text=f"🎚 الجودة: {q.get(quality).label}",
+                             callback_data=f"qual:{job_id}"),
+    )
+
+    # الصف 3 — النسخ
     kb.row(
         InlineKeyboardButton(text="🎲 إنشاء نسخة جديدة", callback_data=f"variant:{job_id}"),
         InlineKeyboardButton(text="⚙️ إعدادات مختلفة",   callback_data=f"settings:{job_id}"),
     )
 
-    # الصف 3 — الإجراءات
-    kb.row(
-        InlineKeyboardButton(text="💾 حفظ في المجلد",   callback_data=f"save:{job_id}"),
-        InlineKeyboardButton(text="📤 إرسال للقناة",     callback_data=f"forward:{job_id}"),
-        InlineKeyboardButton(text="🗑 حذف هذه النسخة",   callback_data=f"delete:{job_id}"),
-    )
+    # الصف 4 — الإجراءات. الحفظ والإرسال للقناة يكتبان في قرص الأدمن وقناته،
+    # فلا يظهران لغيره.
+    if is_admin:
+        kb.row(
+            InlineKeyboardButton(text="💾 حفظ في المجلد",   callback_data=f"save:{job_id}"),
+            InlineKeyboardButton(text="📤 إرسال للقناة",     callback_data=f"forward:{job_id}"),
+            InlineKeyboardButton(text="🗑 حذف هذه النسخة",   callback_data=f"delete:{job_id}"),
+        )
+    else:
+        kb.row(
+            InlineKeyboardButton(text="🗑 حذف هذه النسخة",   callback_data=f"delete:{job_id}"),
+        )
 
-    # الصف 4 — خيارات سريعة
+    # الصف 5 — خيارات سريعة
     kb.row(
         InlineKeyboardButton(text="⬇️ تحميل الأصلي",     callback_data=f"original:{job_id}"),
         InlineKeyboardButton(text="ℹ️ معلومات المعالجة", callback_data=f"info:{job_id}"),
     )
 
+    return kb.as_markup()
+
+
+def quality_keyboard(job_id: str, current: str, can_hq: bool) -> InlineKeyboardMarkup:
+    """
+    The tier picker.
+
+    Locked tiers are *shown*, not hidden: a 🔒 that explains itself when tapped
+    beats a menu that silently has fewer buttons for some people.
+    """
+    kb = InlineKeyboardBuilder()
+    current = q.get(current).key
+    for key in q.ORDER:
+        tier = q.TIERS[key]
+        if key == current:
+            mark = "✅ "
+        elif tier.gated and not can_hq:
+            mark = "🔒 "
+        elif tier.gated:
+            mark = "⭐ "
+        else:
+            mark = "▫️ "
+        kb.row(InlineKeyboardButton(text=f"{mark}{tier.label}",
+                                    callback_data=f"q:{job_id}:{key}"))
+    kb.row(InlineKeyboardButton(text="⬅️ رجوع", callback_data=f"back:{job_id}"))
+    return kb.as_markup()
+
+
+# --------------------------------------------------------------------------- #
+#  User management (admin only)
+# --------------------------------------------------------------------------- #
+def users_keyboard(users: list[UserEntry], pending_count: int) -> InlineKeyboardMarkup:
+    """The allowlist: one row per person, plus the pending-requests door."""
+    kb = InlineKeyboardBuilder()
+    if pending_count:
+        kb.row(InlineKeyboardButton(
+            text=f"⏳ طلبات الانضمام ({pending_count})",
+            callback_data="usr:pend"))
+    for u in users:
+        label = (u.name or str(u.id))[:24]
+        kb.row(InlineKeyboardButton(text=f"👤 {label} · {u.tier_label}",
+                                    callback_data=f"usr:u:{u.id}"))
+    kb.row(InlineKeyboardButton(text="✖️ إغلاق", callback_data="usr:close"))
+    return kb.as_markup()
+
+
+def user_detail_keyboard(user: UserEntry) -> InlineKeyboardMarkup:
+    """Grant / revoke high quality, or remove the person entirely."""
+    kb = InlineKeyboardBuilder()
+    if user.hq:
+        kb.row(InlineKeyboardButton(text="⬇️ سحب الجودة العالية (يرجع 1080p)",
+                                    callback_data=f"usr:hq:{user.id}"))
+    else:
+        kb.row(InlineKeyboardButton(text="⭐ منح الجودة العالية",
+                                    callback_data=f"usr:hq:{user.id}"))
+    kb.row(InlineKeyboardButton(text="🚫 إزالة من القائمة",
+                                callback_data=f"usr:del:{user.id}"))
+    kb.row(InlineKeyboardButton(text="⬅️ رجوع", callback_data="usr:list"))
+    return kb.as_markup()
+
+
+def pending_keyboard(pending: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """Everyone waiting for a decision, three taps each."""
+    kb = InlineKeyboardBuilder()
+    for uid, name in pending:
+        kb.row(InlineKeyboardButton(text=f"— {name[:28]} —",
+                                    callback_data="usr:noop"))
+        kb.row(
+            InlineKeyboardButton(text="✅ قبول 1080p", callback_data=f"usr:ok:{uid}"),
+            InlineKeyboardButton(text="⭐ قبول + جودة عالية",
+                                 callback_data=f"usr:okhq:{uid}"),
+            InlineKeyboardButton(text="🚫 رفض", callback_data=f"usr:no:{uid}"),
+        )
+    kb.row(InlineKeyboardButton(text="⬅️ رجوع", callback_data="usr:list"))
+    return kb.as_markup()
+
+
+def join_request_keyboard(uid: int) -> InlineKeyboardMarkup:
+    """Attached to the card the admin gets the moment a stranger writes in."""
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="✅ قبول 1080p", callback_data=f"usr:ok:{uid}"),
+        InlineKeyboardButton(text="⭐ قبول + جودة عالية",
+                             callback_data=f"usr:okhq:{uid}"),
+    )
+    kb.row(InlineKeyboardButton(text="🚫 رفض", callback_data=f"usr:no:{uid}"))
     return kb.as_markup()
 
 

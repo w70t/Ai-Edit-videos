@@ -20,6 +20,7 @@ from aiogram.types import BotCommand
 from .config import settings
 from .handlers import build_router
 from .services.queue import JobQueue
+from .services.users import registry as users
 from .utils.cleanup import periodic_sweep
 from .utils.ffmpeg import (available_hwaccels, ffmpeg_available,
                            has_v4l2_decoder, resolve_hwaccel)
@@ -39,6 +40,9 @@ async def main() -> None:
         raise SystemExit("FFmpeg/ffprobe not found. Install with: sudo apt install -y ffmpeg")
 
     log.info("admin id: %s", settings.admin_id)
+    log.info("allowlist: %s (%d users, %d with high quality, %d pending)",
+             settings.users_db, users.count(),
+             sum(1 for u in users.users() if u.hq), len(users.pending()))
     log.info("work dir: %s | save dir: %s", settings.work_dir, settings.save_dir)
     log.info("telegram limits: %d MB in / %d MB out%s",
              settings.max_incoming_mb, settings.max_outgoing_mb,
@@ -80,6 +84,7 @@ async def main() -> None:
             BotCommand(command="status", description="حالة الطابور والنظام"),
             BotCommand(command="research", description="آخر أساليب كشف التكرار"),
             BotCommand(command="forget", description="مسح سجل تخطّي المكرر"),
+            BotCommand(command="users", description="إدارة المستخدمين (أدمن)"),
         ])
 
         log.info("bot is up — polling for updates")

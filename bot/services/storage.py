@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .editor import EditOptions, preset_options
+from .quality import STANDARD
 
 
 @dataclass
@@ -29,8 +30,10 @@ class JobRecord:
     output: Path | None = None           # latest rendered file
     intensity: str = "medium"
     options: EditOptions = field(default_factory=EditOptions)
+    quality: str = STANDARD              # tier used to fetch AND to encode
     origin: str = ""                     # the link, or "upload"
     chat_id: int = 0
+    user_id: int = 0                     # who owns this job (button ownership)
     result_message_id: int | None = None # message that holds the keyboard
     # processing metadata for the "Show Processing Info" button
     created: float = field(default_factory=time.time)
@@ -45,6 +48,15 @@ class JobRecord:
         self.intensity = intensity
         self.options = preset_options(intensity)
 
+    @property
+    def from_link(self) -> bool:
+        """
+        True when the source came from a URL, so it can be re-fetched at a
+        different quality. A Telegram upload cannot: the bot only ever sees
+        the copy Telegram already compressed.
+        """
+        return self.origin.startswith(("http://", "https://"))
+
 
 class JobStore:
     """Tiny dict-backed store with size-bounded pruning."""
@@ -53,12 +65,14 @@ class JobStore:
         self._jobs: dict[str, JobRecord] = {}
         self._max = max_jobs
 
-    def new(self, base_dir: Path, chat_id: int, origin: str) -> JobRecord:
+    def new(self, base_dir: Path, chat_id: int, origin: str,
+            user_id: int = 0, quality: str = STANDARD) -> JobRecord:
         """Mint a job id, create its private temp dir under `base_dir`."""
         job_id = uuid.uuid4().hex[:10]
         work_dir = base_dir / job_id
         work_dir.mkdir(parents=True, exist_ok=True)
-        rec = JobRecord(id=job_id, work_dir=work_dir, chat_id=chat_id, origin=origin)
+        rec = JobRecord(id=job_id, work_dir=work_dir, chat_id=chat_id,
+                        origin=origin, user_id=user_id, quality=quality)
         self._jobs[job_id] = rec
         self._prune()
         return rec

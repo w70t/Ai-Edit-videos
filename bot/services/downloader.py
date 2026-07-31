@@ -14,6 +14,10 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
+from ..config import settings
+from .quality import Quality, format_selector
+from .quality import get as get_tier
+
 log = logging.getLogger(__name__)
 
 # Quick sanity check so we only treat real http(s) URLs as links.
@@ -29,16 +33,26 @@ def extract_url(text: str) -> str | None:
     return m.group(0) if m else None
 
 
-def _ydl_opts(out_dir: Path, max_mb: int) -> dict:
+def tier_cap_mb(tier: Quality) -> int:
     """
-    Conservative options tuned for a Pi:
-      * cap resolution at 1080p so we never download a giant 4K master,
+    The size ceiling actually applied: the tier's own cap, clamped by the
+    global MAX_VIDEO_MB so a button press can never exceed what the disk
+    was provisioned for.
+    """
+    return min(tier.max_mb, settings.max_video_mb)
+
+
+def _ydl_opts(out_dir: Path, tier: Quality) -> dict:
+    """
+    Options tuned for a Pi:
+      * resolution capped by the chosen tier (1080p unless the user has the
+        high-quality grant and picked something bigger),
       * single fragment-concurrency to avoid RAM/network spikes,
       * merge to mp4 for predictable downstream FFmpeg handling.
     """
     return {
         "outtmpl": str(out_dir / "source.%(ext)s"),
-        "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "format": format_selector(tier.max_height),
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
@@ -47,12 +61,14 @@ def _ydl_opts(out_dir: Path, max_mb: int) -> dict:
         "retries": 3,
         "socket_timeout": 30,
         # Reject absurdly large files early (yt-dlp filesize filter, bytes).
-        "max_filesize": max_mb * 1024 * 1024,
+        # NOTE: this ABORTS the download, it does not fall back to a smaller
+        # format — hence the tier-aware error message in `download()`.
+        "max_filesize": tier_cap_mb(tier) * 1024 * 1024,
     }
 
 
-def _blocking_download(url: str, out_dir: Path, max_mb: int) -> Path:
-    with YoutubeDL(_ydl_opts(out_dir, max_mb)) as ydl:
+def _blocking_download(url: str, out_dir: Path, tier: Quality) -> Path:
+    with YoutubeDL(_ydl_opts(out_dir, tier)) as ydl:
         info = ydl.extract_info(url, download=True)
         # With merge_output_format the real file is the mp4 in out_dir.
         path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
@@ -65,7 +81,22 @@ def _blocking_download(url: str, out_dir: Path, max_mb: int) -> Path:
         return path
 
 
-async def download(url: str, out_dir: Path, max_mb: int) -> Path:
-    """Download `url` into `out_dir`, returning the resulting file path."""
-    log.info("downloading %s", url)
-    return await asyncio.to_thread(_blocking_download, url, out_dir, max_mb)
+async def download(url: str, out_dir: Path, quality: str) -> Path:
+    """
+    Download `url` into `out_dir` at the given quality tier.
+
+    A size abort is translated into a message that names the tier, because
+    "File is larger than max-filesize" tells the user nothing about the one
+    button that would fix it.
+    """
+    tier = get_tier(quality)
+    log.info("downloading %s at %s (cap %d MB)", url, tier.key, tier_cap_mb(tier))
+    try:
+        return await asyncio.to_thread(_blocking_download, url, out_dir, tier)
+    except Exception as exc:
+        if "max-filesize" in str(exc).lower() or "larger than" in str(exc).lower():
+            raise RuntimeError(
+                f"الفيديو أكبر من سقف جودة «{tier.label}» "
+                f"({tier_cap_mb(tier)} ميجابايت). اختر جودة أقل من زر 🎚 الجودة."
+            ) from exc
+        raise

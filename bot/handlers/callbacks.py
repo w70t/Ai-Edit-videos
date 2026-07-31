@@ -18,18 +18,20 @@ from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, FSInputFile
 
 from ..config import settings
-from ..filters import IsAdmin
-from ..keyboards import result_keyboard, settings_keyboard
+from ..filters import IsAllowed
+from ..keyboards import (quality_keyboard, result_keyboard, settings_keyboard)
+from ..services import quality
 from ..services.editor import TOGGLEABLE, impact_label
-from ..services.processor import render_and_send
+from ..services.processor import refetch_source, render_and_send
 from ..services.queue import Job, JobQueue
 from ..services.storage import JobRecord, store
+from ..services.users import registry as users
 from ..utils.cleanup import remove_path
 
 log = logging.getLogger(__name__)
 
 router = Router(name="callbacks")
-router.callback_query.filter(IsAdmin())
+router.callback_query.filter(IsAllowed())
 
 
 def _job_id(data: str) -> str:
@@ -53,20 +55,41 @@ OPTION_AR = {"flip": "العكس", "zoom": "التقريب والتأطير",
 
 
 async def _require_job(cq: CallbackQuery) -> JobRecord | None:
+    """
+    Resolve the job behind a button press, and check it belongs to the presser.
+
+    Ownership matters now that more than one person uses the bot: job ids ride
+    in callback_data, and a guessed id must not hand someone else's video —
+    or their delete button — to a stranger. The admin is exempt so they can
+    still help with any job.
+    """
     rec = store.get(_job_id(cq.data))
     if rec is None or rec.source is None or not rec.source.exists():
         await cq.answer("⚠️ انتهت صلاحية هذه المهمة — أرسل الفيديو من جديد.",
                         show_alert=True)
         return None
+    presser = cq.from_user.id
+    if rec.user_id and rec.user_id != presser and not users.is_admin(presser):
+        await cq.answer("⚠️ هذه المهمة ليست لك.", show_alert=True)
+        return None
     return rec
 
 
 async def _queue_rerender(cq: CallbackQuery, bot: Bot, queue: JobQueue,
-                          rec: JobRecord, note: str) -> None:
-    """Send a fresh status message and enqueue a re-render."""
+                          rec: JobRecord, note: str,
+                          refetch: bool = False) -> None:
+    """
+    Send a fresh status message and enqueue a re-render.
+
+    `refetch` re-downloads the source first — needed only when the quality tier
+    changed on a link job, and done inside the queue so a 4K pull cannot run
+    concurrently with somebody else's render.
+    """
     status = await bot.send_message(rec.chat_id, note)
 
     async def run() -> None:
+        if refetch:
+            await refetch_source(rec)
         await render_and_send(
             bot, rec,
             status_chat_id=status.chat.id,
@@ -114,6 +137,73 @@ async def cb_variant(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
     await _queue_rerender(cq, bot, queue, rec, "🎲 جارٍ إنشاء نسخة جديدة…")
 
 
+# --------------------------------------------------------------------------- #
+#  Quality tier
+# --------------------------------------------------------------------------- #
+@router.callback_query(F.data.startswith("qual:"))
+async def cb_quality_menu(cq: CallbackQuery) -> None:
+    rec = await _require_job(cq)
+    if not rec:
+        return
+    can_hq = users.can_hq(cq.from_user.id)
+    await cq.message.edit_reply_markup(
+        reply_markup=quality_keyboard(rec.id, rec.quality, can_hq))
+
+    lines = [f"{quality.TIERS[k].label} — {quality.TIERS[k].note}"
+             for k in quality.ORDER]
+    if not can_hq:
+        lines.append("")
+        lines.append("🔒 المستويات فوق 1080p تحتاج إذن من الأدمن.")
+    elif not settings.telegram_local_api:
+        # The one failure mode that actually bites: the render succeeds and
+        # then cannot be delivered. Say it before they pick, not after.
+        lines.append("")
+        lines.append(f"⚠️ حد الإرسال {settings.max_outgoing_mb} ميجابايت — "
+                     f"المقاطع الطويلة بجودة عالية قد تتجاوزه.")
+    await cq.answer("\n".join(lines), show_alert=True)
+
+
+@router.callback_query(F.data.startswith("q:"))
+async def cb_quality_set(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
+    rec = await _require_job(cq)
+    if not rec:
+        return
+    tier = quality.get(_arg(cq.data))
+
+    if tier.gated and not users.can_hq(cq.from_user.id):
+        await cq.answer(
+            f"🔒 «{tier.label}» متاح للأدمن والأشخاص المصرّح لهم فقط.\n"
+            f"اطلب من الأدمن منحك الجودة العالية.", show_alert=True)
+        return
+
+    if tier.key == rec.quality:
+        await cq.answer("هذه الجودة مطبّقة أصلاً.")
+        return
+
+    rec.quality = tier.key
+    # Remember it so their next video starts here without another tap.
+    users.set_quality(cq.from_user.id, tier.key)
+    await cq.message.edit_reply_markup(
+        reply_markup=result_keyboard(rec.id, rec.quality,
+                                     users.is_admin(cq.from_user.id)))
+
+    if rec.from_link:
+        await cq.answer(f"🎚 {tier.label} — جارٍ إعادة التحميل بهذه الجودة…")
+        await _queue_rerender(
+            cq, bot, queue, rec,
+            f"⬇️ جارٍ إعادة تحميل المصدر بجودة *{tier.label}*…",
+            refetch=True)
+        return
+
+    # An upload has no higher-resolution original to go back for; only the
+    # encode improves. Be explicit rather than implying a new download.
+    await cq.answer(
+        f"🎚 {tier.label} — الفيديو مرفوع مباشرة، فلا يمكن جلب دقة أعلى؛ "
+        f"سيُعاد الترميز بجودة أفضل فقط.", show_alert=True)
+    await _queue_rerender(cq, bot, queue, rec,
+                          f"⚙️ جارٍ إعادة الترميز بجودة *{tier.label}*…")
+
+
 @router.callback_query(F.data.startswith("settings:"))
 async def cb_settings(cq: CallbackQuery) -> None:
     rec = await _require_job(cq)
@@ -152,15 +242,32 @@ async def cb_back(cq: CallbackQuery) -> None:
     rec = await _require_job(cq)
     if not rec:
         return
-    await cq.message.edit_reply_markup(reply_markup=result_keyboard(rec.id))
+    await cq.message.edit_reply_markup(
+        reply_markup=result_keyboard(rec.id, rec.quality,
+                                     users.is_admin(cq.from_user.id)))
     await cq.answer()
 
 
 # --------------------------------------------------------------------------- #
 #  Row 3 — Actions
 # --------------------------------------------------------------------------- #
+async def _admin_only(cq: CallbackQuery) -> bool:
+    """
+    Guard the two actions that touch the ADMIN's own resources.
+
+    The buttons are already hidden from guests, but callback_data is just text
+    a client can send — the check has to live here too.
+    """
+    if users.is_admin(cq.from_user.id):
+        return True
+    await cq.answer("⚠️ هذا الإجراء للأدمن فقط.", show_alert=True)
+    return False
+
+
 @router.callback_query(F.data.startswith("save:"))
 async def cb_save(cq: CallbackQuery) -> None:
+    if not await _admin_only(cq):
+        return
     rec = await _require_job(cq)
     if not rec or not rec.output or not rec.output.exists():
         await cq.answer("لا يوجد شيء للحفظ بعد.", show_alert=True)
@@ -174,6 +281,8 @@ async def cb_save(cq: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("forward:"))
 async def cb_forward(cq: CallbackQuery, bot: Bot) -> None:
+    if not await _admin_only(cq):
+        return
     rec = await _require_job(cq)
     if not rec or not rec.output or not rec.output.exists():
         await cq.answer("لا يوجد شيء للإرسال بعد.", show_alert=True)
@@ -196,6 +305,12 @@ async def cb_forward(cq: CallbackQuery, bot: Bot) -> None:
 @router.callback_query(F.data.startswith("delete:"))
 async def cb_delete(cq: CallbackQuery) -> None:
     rec = store.get(_job_id(cq.data))
+    # Not routed through _require_job: deleting must still work once the source
+    # file is gone. The ownership half of that check is still required though.
+    presser = cq.from_user.id
+    if rec and rec.user_id and rec.user_id != presser and not users.is_admin(presser):
+        await cq.answer("⚠️ هذه المهمة ليست لك.", show_alert=True)
+        return
     # Delete the message holding the video + keyboard.
     try:
         await cq.message.delete()
@@ -231,6 +346,7 @@ async def cb_info(cq: CallbackQuery) -> None:
     p = rec.probe or {}
     dur = float(p.get("duration", 0) or 0)
     label = INTENSITY_AR.get(rec.intensity, rec.intensity)
+    tier = quality.get(rec.quality)
     lines = [
         "ℹ️ معلومات المعالجة",
         f"• المهمة: {rec.id}",
@@ -239,6 +355,8 @@ async def cb_info(cq: CallbackQuery) -> None:
         f"• المدة الأصلية: {dur:.1f} ثانية",
         f"• الترميز: {p.get('codec', '?')}",
         f"• الشدّة: {label}",
+        f"• الجودة: {tier.label} (CRF {tier.crf} · {tier.preset} · "
+        f"صوت {tier.audio_bitrate})",
         f"• عدد النسخ: {rec.variant_count}",
         f"• آخر معالجة: {rec.last_render_seconds:.2f} ثانية",
         f"• تسريع عتادي: {settings.hw_accel}",
