@@ -32,8 +32,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# The tier every new user gets, and the one the gate falls back to.
+# What an ordinary member gets, always, with no picker shown: exactly the
+# behaviour the bot had before tiers existed.
 STANDARD = "1080"
+
+# Where the admin and anyone they grant start instead. 4K rather than the
+# uncapped "best": it is high quality by any measure, while "best" would happily
+# pull an 8K master onto a Raspberry Pi. "best" stays one tap away in the picker.
+HQ_DEFAULT = "2160"
 
 
 @dataclass(frozen=True)

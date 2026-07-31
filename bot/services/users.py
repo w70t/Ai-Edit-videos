@@ -3,14 +3,16 @@ Who may use the bot, and who may ask it for high quality.
 
 Two tiers, both managed entirely from buttons:
 
-  * **allowed**  – the bot answers this person at all. Everyone here gets
-    1080p, which is the whole point: the Pi stays responsive for the group.
-  * **hq**       – this person may also pick 1440p / 4K / best. The admin
-    grants it per person, because every grant is a licence to occupy the
-    single render slot for a long time.
+  * **allowed**  – the bot answers this person at all. They get 1080p and are
+    never shown a quality picker at all: no menu, no locked entries, nothing
+    to ask about. That is the whole point — the Pi stays responsive for the
+    group, and the feature is invisible to everyone it does not apply to.
+  * **hq**       – this person downloads at high quality by default and may
+    pick any tier from the 🎚 button. The admin grants it per person, because
+    every grant is a licence to occupy the single render slot for a long time.
 
 The admin (ADMIN_ID) is implicit in both tiers and is never stored — the file
-can be deleted and the owner still gets in.
+can be deleted and the owner still gets in, still at high quality.
 
 Pending requests
 ----------------
@@ -28,7 +30,8 @@ import time
 from dataclasses import dataclass
 
 from ..config import settings
-from .quality import STANDARD, get as get_tier
+from .quality import HQ_DEFAULT, STANDARD
+from .quality import get as get_tier
 
 log = logging.getLogger(__name__)
 
@@ -141,15 +144,20 @@ class UserRegistry:
 
         Their remembered pick, but only if they still hold the grant — revoking
         HQ must take effect immediately, not at their next manual change.
+        Anyone WITH the grant and no stored pick starts high, not at 1080p:
+        being granted high quality has to mean their next video is high
+        quality, without a tap.
         """
-        if self.is_admin(uid):
-            entry = self._users.get(uid)
-            return entry.quality if entry else STANDARD
         entry = self._users.get(uid)
+        if self.is_admin(uid):
+            # True even with no row at all, so a deleted users.json still
+            # leaves the owner on high quality.
+            return entry.quality if entry else HQ_DEFAULT
         if entry is None:
             return STANDARD
-        tier = get_tier(entry.quality)
-        return tier.key if (not tier.gated or entry.hq) else STANDARD
+        if not entry.hq:
+            return STANDARD
+        return get_tier(entry.quality).key
 
     # --- mutations --------------------------------------------------------- #
     def add(self, uid: int, name: str = "", hq: bool = False) -> UserEntry:
@@ -161,6 +169,8 @@ class UserRegistry:
             entry.hq = hq
             if name:
                 entry.name = name
+        # Granting the tier is the whole point of the grant — start them there.
+        entry.quality = HQ_DEFAULT if hq else STANDARD
         self._pending.pop(uid, None)
         self._save()
         return entry
@@ -176,7 +186,11 @@ class UserRegistry:
         if entry is None:
             return False
         entry.hq = on
-        if not on:
+        if on:
+            # Take effect on their very next video, with no tap required.
+            if not get_tier(entry.quality).gated:
+                entry.quality = HQ_DEFAULT
+        else:
             # Drop a now-forbidden remembered tier so it cannot come back.
             if get_tier(entry.quality).gated:
                 entry.quality = STANDARD
@@ -191,7 +205,8 @@ class UserRegistry:
                 return
             # The admin is not in the file by default; materialise a row so
             # their preference survives a restart like everyone else's.
-            entry = UserEntry(id=uid, name="admin", hq=True, added=time.time())
+            entry = UserEntry(id=uid, name="admin", hq=True,
+                              quality=HQ_DEFAULT, added=time.time())
             self._users[uid] = entry
         entry.quality = get_tier(key).key
         self._save()

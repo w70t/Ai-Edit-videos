@@ -41,9 +41,9 @@ WELCOME_ADMIN = (
     "أرسل لي *رابط ريلز / تيك توك*، أو *ارفع فيديو*، أو *حوّل (forward) فيديو "
     "من أي قناة*، وراح أرجّع لك نسخة معدّلة مصمّمة لتفادي كشف المحتوى المكرر — "
     "مع لوحة أزرار للتحكم وتعديل النتيجة.\n\n"
-    "🎚 *الجودة*: زر تحت كل فيديو. أنت وأي شخص تمنحه الصلاحية تقدرون تختارون "
-    "2K و4K؛ الباقي على 1080p عشان يبقى الجهاز سريع.\n"
-    "👥 اضغط *المستخدمون* لإدارة من يدخل ومن يحصل على الجودة العالية.\n\n"
+    "🎚 *الجودة*: فيديوهاتك تنزل بأعلى جودة تلقائياً، وتقدر تغيّر المستوى من "
+    "زر 🎚 تحت أي فيديو. الأعضاء العاديون على 1080p ثابت ولا يرون الزر أصلاً.\n"
+    "👥 اضغط *المستخدمون* ← ➕ لإضافة شخص بمعرّفه ومنحه الجودة العالية.\n\n"
     "_تلميح: الملفات فوق 20 ميجابايت لا يسمح تيليجرام للبوتات بتحميلها — "
     "أرسل الرابط بدل الملف._"
 )
@@ -73,14 +73,15 @@ async def cmd_start(message: Message) -> None:
 async def cmd_status(message: Message, queue: JobQueue) -> None:
     uid = message.from_user.id
     is_admin = users.is_admin(uid)
-    tier = quality.get(users.default_quality(uid))
     lines = [
         "📊 *الحالة*",
         f"• مهام في الانتظار: *{queue.pending}*",
-        f"• جودتك الحالية: *{tier.label}*"
-        + ("" if users.can_hq(uid) else " (المستويات الأعلى تحتاج إذن الأدمن)"),
         f"• الوضع الافتراضي: *{settings.default_intensity}*",
     ]
+    # Only surfaced to people who have a quality button to act on it with.
+    if users.can_hq(uid):
+        tier = quality.get(users.default_quality(uid))
+        lines.insert(2, f"• جودتك الحالية: *{tier.label}*")
     if is_admin:
         dedup_state = "مُفعّل ✅" if settings.skip_duplicates else "معطّل ⛔"
         lines += [

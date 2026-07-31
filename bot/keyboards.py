@@ -70,7 +70,8 @@ def confirm_forget_keyboard() -> InlineKeyboardMarkup:
 
 
 def result_keyboard(job_id: str, quality: str = q.STANDARD,
-                    is_admin: bool = True) -> InlineKeyboardMarkup:
+                    is_admin: bool = True,
+                    can_hq: bool = True) -> InlineKeyboardMarkup:
     """
     The main control panel shown *under every finished video*.
 
@@ -80,14 +81,18 @@ def result_keyboard(job_id: str, quality: str = q.STANDARD,
             [Repost Mode]
         Row 1 – Edit Intensity
             [Light Edit] [Medium Edit] [Strong Edit]
-        Row 2 – Quality (opens the tier picker)
-            [Quality: 1080p]
+        Row 2 – Quality — ONLY for the admin and granted users
+            [Quality: 4K]
         Row 3 – Variants
             [Generate New Variant] [Try Different Settings]
         Row 4 – Actions (admin only: they write to the admin's disk/channel)
             [Save to Folder] [Forward to Channel] [Delete this version]
         Row 5 – Quick Options
             [Download Original] [Show Processing Info]
+
+    An ordinary member never sees row 2 at all — not a locked button, not a
+    hint. Their videos are 1080p and the tier system simply does not exist
+    from where they stand.
     """
     kb = InlineKeyboardBuilder()
 
@@ -104,11 +109,12 @@ def result_keyboard(job_id: str, quality: str = q.STANDARD,
         InlineKeyboardButton(text="🔴 تعديل قوي",   callback_data=f"edit:{job_id}:strong"),
     )
 
-    # الصف 2 — الجودة (يفتح قائمة المستويات)
-    kb.row(
-        InlineKeyboardButton(text=f"🎚 الجودة: {q.get(quality).label}",
-                             callback_data=f"qual:{job_id}"),
-    )
+    # الصف 2 — الجودة. لا تظهر إطلاقاً لغير المصرّح لهم.
+    if can_hq:
+        kb.row(
+            InlineKeyboardButton(text=f"🎚 الجودة: {q.get(quality).label}",
+                                 callback_data=f"qual:{job_id}"),
+        )
 
     # الصف 3 — النسخ
     kb.row(
@@ -138,25 +144,16 @@ def result_keyboard(job_id: str, quality: str = q.STANDARD,
     return kb.as_markup()
 
 
-def quality_keyboard(job_id: str, current: str, can_hq: bool) -> InlineKeyboardMarkup:
+def quality_keyboard(job_id: str, current: str) -> InlineKeyboardMarkup:
     """
-    The tier picker.
-
-    Locked tiers are *shown*, not hidden: a 🔒 that explains itself when tapped
-    beats a menu that silently has fewer buttons for some people.
+    The tier picker. Only ever reached by the admin and granted users, so every
+    tier here is one they may actually choose — no locks to render.
     """
     kb = InlineKeyboardBuilder()
     current = q.get(current).key
     for key in q.ORDER:
         tier = q.TIERS[key]
-        if key == current:
-            mark = "✅ "
-        elif tier.gated and not can_hq:
-            mark = "🔒 "
-        elif tier.gated:
-            mark = "⭐ "
-        else:
-            mark = "▫️ "
+        mark = "✅ " if key == current else ("⭐ " if tier.gated else "▫️ ")
         kb.row(InlineKeyboardButton(text=f"{mark}{tier.label}",
                                     callback_data=f"q:{job_id}:{key}"))
     kb.row(InlineKeyboardButton(text="⬅️ رجوع", callback_data=f"back:{job_id}"))
@@ -167,8 +164,10 @@ def quality_keyboard(job_id: str, current: str, can_hq: bool) -> InlineKeyboardM
 #  User management (admin only)
 # --------------------------------------------------------------------------- #
 def users_keyboard(users: list[UserEntry], pending_count: int) -> InlineKeyboardMarkup:
-    """The allowlist: one row per person, plus the pending-requests door."""
+    """The allowlist: one row per person, plus the two ways to add someone."""
     kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="➕ إضافة شخص بالمعرّف (جودة عالية)",
+                                callback_data="usr:add"))
     if pending_count:
         kb.row(InlineKeyboardButton(
             text=f"⏳ طلبات الانضمام ({pending_count})",
@@ -178,6 +177,13 @@ def users_keyboard(users: list[UserEntry], pending_count: int) -> InlineKeyboard
         kb.row(InlineKeyboardButton(text=f"👤 {label} · {u.tier_label}",
                                     callback_data=f"usr:u:{u.id}"))
     kb.row(InlineKeyboardButton(text="✖️ إغلاق", callback_data="usr:close"))
+    return kb.as_markup()
+
+
+def cancel_add_keyboard() -> InlineKeyboardMarkup:
+    """A way out of the "send me an id" prompt that is not a typed command."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="↩️ إلغاء", callback_data="usr:cancel"))
     return kb.as_markup()
 
 

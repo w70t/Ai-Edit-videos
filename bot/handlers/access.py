@@ -18,14 +18,17 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot, F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command, or_f
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from ..config import settings
 from ..filters import IsAdmin, IsStranger
-from ..keyboards import (BTN_USERS, join_request_keyboard, main_menu,
-                         pending_keyboard, user_detail_keyboard,
-                         users_keyboard)
+from ..keyboards import (BTN_USERS, MENU_BUTTONS, cancel_add_keyboard,
+                         join_request_keyboard, main_menu, pending_keyboard,
+                         user_detail_keyboard, users_keyboard)
 from ..services.users import registry
 
 log = logging.getLogger(__name__)
@@ -37,6 +40,11 @@ admin_router.callback_query.filter(IsAdmin())
 stranger_router = Router(name="access-stranger")
 stranger_router.message.filter(IsStranger())
 stranger_router.callback_query.filter(IsStranger())
+
+
+class AddUser(StatesGroup):
+    """The admin has been asked for a user id and we are waiting for it."""
+    waiting_for_id = State()
 
 
 def _display_name(user) -> str:
@@ -67,13 +75,15 @@ def _panel_text() -> str:
         f"• منهم بجودة عالية: *{hq}*",
         f"• طلبات معلّقة: *{len(registry.pending())}*",
         "",
-        "الجميع يبدأ على *1080p*. الجودة العالية (2K / 4K) تُمنح فردياً — "
-        "كل منح يعني احتمال حجز جهاز الرندر لوقت طويل.",
+        "العضو العادي يحمّل *1080p* فقط، و*لا يرى زر الجودة إطلاقاً* — لا "
+        "قائمة ولا خيارات مقفلة.",
+        "من تمنحه *الجودة العالية* تصير فيديوهاته تنزل بأعلى دقة تلقائياً، "
+        "ويظهر له زر 🎚 الجودة ليغيّرها.",
     ]
     if not users:
         lines.append("")
-        lines.append("_لا أحد في القائمة بعد. أي شخص يراسل البوت سيظهر هنا "
-                     "كطلب انضمام._")
+        lines.append("_لا أحد في القائمة بعد. اضغط ➕ لإضافة شخص بمعرّفه، أو "
+                     "انتظر حتى يراسل البوت فيظهر كطلب انضمام._")
     return "\n".join(lines)
 
 
@@ -92,6 +102,97 @@ async def cmd_users(message: Message) -> None:
 async def cb_noop(cq: CallbackQuery) -> None:
     """The name header rows in the pending list are labels, not buttons."""
     await cq.answer()
+
+
+# --------------------------------------------------------------------------- #
+#  Adding someone by id
+#
+#  Telegram's UI never shows a numeric user id, so typing one is only half a
+#  solution — forwarding a message from the person is accepted too, and is
+#  usually the only way the admin can learn the id at all.
+# --------------------------------------------------------------------------- #
+ADD_PROMPT = (
+    "➕ *إضافة شخص بجودة عالية*\n\n"
+    "أرسل الآن *المعرّف الرقمي* للشخص، مثال: `123456789`\n"
+    "أو **حوّل (forward) أي رسالة منه** وراح آخذ معرّفه تلقائياً.\n\n"
+    "_لمعرفة المعرّف: اطلب منه يرسل لك رسالة وحوّلها لي، أو يفتح_ @userinfobot"
+)
+
+
+@admin_router.callback_query(F.data == "usr:add")
+async def cb_add_prompt(cq: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AddUser.waiting_for_id)
+    await cq.message.answer(ADD_PROMPT, parse_mode="Markdown",
+                            reply_markup=cancel_add_keyboard())
+    await cq.answer()
+
+
+@admin_router.callback_query(F.data == "usr:cancel")
+async def cb_add_cancel(cq: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    try:
+        await cq.message.edit_text("↩️ أُلغيت الإضافة.")
+    except Exception:
+        pass
+    await cq.answer()
+
+
+def _forwarded_sender_id(message: Message) -> int | None:
+    """The original sender's id, when a forward exposes it."""
+    origin = getattr(message, "forward_origin", None)
+    user = getattr(origin, "sender_user", None) if origin else None
+    return user.id if user else None
+
+
+@admin_router.message(AddUser.waiting_for_id)
+async def on_user_id(message: Message, bot: Bot, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+
+    # A menu button or a slash command mid-flow means they moved on. Drop the
+    # state and hand the update back so the button still does its job — a
+    # half-finished add must never swallow the next thing they press.
+    if text in MENU_BUTTONS or text.startswith("/"):
+        await state.clear()
+        raise SkipHandler
+
+    uid = _forwarded_sender_id(message)
+    if uid is None:
+        digits = text.lstrip("+")
+        if not digits.isdigit():
+            await message.answer(
+                "⚠️ هذا ليس معرّفاً رقمياً. أرسل أرقاماً فقط مثل `123456789`، "
+                "أو حوّل رسالة من الشخص.\nأو اضغط ↩️ إلغاء.",
+                parse_mode="Markdown", reply_markup=cancel_add_keyboard())
+            return
+        uid = int(digits)
+
+    await state.clear()
+
+    if registry.is_admin(uid):
+        await message.answer("هذا معرّفك أنت — عندك الجودة العالية أصلاً.")
+        await _show_panel(message)
+        return
+
+    existing = registry.get(uid)
+    # A forward carries the person's real name; a typed id carries nothing, so
+    # keep whatever we already had rather than overwriting it with the number.
+    name = (message.forward_origin.sender_user.full_name
+            if _forwarded_sender_id(message) else
+            (existing.name if existing else "")) or str(uid)
+
+    registry.add(uid, name=name, hq=True)
+    log.info("admin added %s by id (hq=True)", uid)
+
+    await _notify(bot, uid,
+                  "✅ تم قبولك في البوت — أرسل رابط ريلز/تيك توك أو ارفع فيديو.\n"
+                  "⭐ عندك *الجودة العالية*: فيديوهاتك تنزل بأعلى دقة تلقائياً، "
+                  "وتقدر تغيّرها من زر 🎚 الجودة تحت أي فيديو.")
+
+    verb = "حُدِّث" if existing else "أُضيف"
+    await message.answer(
+        f"✅ {verb} *{name}* (`{uid}`) بصلاحية *الجودة العالية*.",
+        parse_mode="Markdown")
+    await _show_panel(message)
 
 
 @admin_router.callback_query(F.data == "usr:close")
@@ -163,12 +264,12 @@ async def _approve(cq: CallbackQuery, bot: Bot, hq: bool) -> None:
     registry.add(uid, name=name, hq=hq)
     log.info("admin approved %s (hq=%s)", uid, hq)
 
+    # A plain member is told nothing about tiers — they have no button for it,
+    # so mentioning it would only invite a request.
     await _notify(bot, uid,
-                  "✅ تم قبولك — أرسل رابط ريلز/تيك توك أو ارفع فيديو.\n"
-                  + ("⭐ عندك صلاحية *الجودة العالية*: اضغط 🎚 الجودة تحت "
-                     "أي فيديو واختر 2K أو 4K."
-                     if hq else
-                     "الجودة عندك *1080p* — الأسرع، وتكفي لأغلب المقاطع."))
+                  "✅ تم قبولك — أرسل رابط ريلز/تيك توك أو ارفع فيديو."
+                  + ("\n⭐ عندك *الجودة العالية*: فيديوهاتك تنزل بأعلى دقة "
+                     "تلقائياً، وتقدر تغيّرها من زر 🎚 الجودة." if hq else ""))
     await cq.answer(f"✅ {name} — {'جودة عالية' if hq else '1080p'}")
     await cb_list(cq)
 

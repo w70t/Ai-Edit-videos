@@ -51,12 +51,14 @@ def _caption(rec: JobRecord) -> str:
     extras = (" · " + "، ".join(flags)) if flags else ""
     label = INTENSITY_LABEL.get(rec.intensity, rec.intensity)
     variant = f" · نسخة #{rec.variant_count}" if rec.variant_count else ""
-    tier = quality.get(rec.quality)
     # Say plainly how much this render is expected to matter — a green tick
     # alone would imply more than a cosmetic pass actually achieves.
     verdict = f"\n🎯 أثر متوقع على كشف التكرار: {impact_label(rec.edit_notes)}"
-    return (f"✅ تم — تعديل *{label}*{extras}{variant}\n"
-            f"🎚 الجودة: *{tier.label}*{verdict}")
+    # The tier line is for people who can act on it. To a regular member it
+    # would only advertise a setting they have no button for.
+    tier_line = (f"\n🎚 الجودة: *{quality.get(rec.quality).label}*"
+                 if users.can_hq(rec.user_id) else "")
+    return f"✅ تم — تعديل *{label}*{extras}{variant}{tier_line}{verdict}"
 
 
 async def refetch_source(rec: JobRecord) -> None:
@@ -172,7 +174,8 @@ async def render_and_send(
         duration=duration or None,
         thumbnail=thumb,
         reply_markup=result_keyboard(rec.id, rec.quality,
-                                     users.is_admin(rec.user_id)),
+                                     users.is_admin(rec.user_id),
+                                     users.can_hq(rec.user_id)),
     )
     rec.result_message_id = sent.message_id
 

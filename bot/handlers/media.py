@@ -126,10 +126,11 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     url = downloader.extract_url(message.text)
     uid = message.from_user.id
     # Their remembered tier, already downgraded by the registry if the grant
-    # was revoked since they last chose.
+    # was revoked since they last chose. A regular member is always 1080p and
+    # is not told about tiers at all.
     tier = quality.get(users.default_quality(uid))
-    status = await message.answer(
-        f"⬇️ جارٍ تحميل الفيديو من الرابط… ({tier.label})")
+    suffix = f" ({tier.label})" if users.can_hq(uid) else ""
+    status = await message.answer(f"⬇️ جارٍ تحميل الفيديو من الرابط…{suffix}")
 
     rec = store.new(settings.work_dir, message.chat.id, origin=url,
                     user_id=uid, quality=tier.key)

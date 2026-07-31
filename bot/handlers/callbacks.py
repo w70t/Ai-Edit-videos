@@ -140,21 +140,33 @@ async def cb_variant(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
 # --------------------------------------------------------------------------- #
 #  Quality tier
 # --------------------------------------------------------------------------- #
+async def _hq_only(cq: CallbackQuery) -> bool:
+    """
+    Guard the tier picker.
+
+    Regular members are never shown the button, so reaching here means either
+    a stale keyboard from before their grant was revoked, or hand-sent
+    callback_data. Either way the answer is the same.
+    """
+    if users.can_hq(cq.from_user.id):
+        return True
+    await cq.answer("⚠️ فيديوهاتك تُعالَج بجودة 1080p.", show_alert=True)
+    return False
+
+
 @router.callback_query(F.data.startswith("qual:"))
 async def cb_quality_menu(cq: CallbackQuery) -> None:
+    if not await _hq_only(cq):
+        return
     rec = await _require_job(cq)
     if not rec:
         return
-    can_hq = users.can_hq(cq.from_user.id)
     await cq.message.edit_reply_markup(
-        reply_markup=quality_keyboard(rec.id, rec.quality, can_hq))
+        reply_markup=quality_keyboard(rec.id, rec.quality))
 
     lines = [f"{quality.TIERS[k].label} — {quality.TIERS[k].note}"
              for k in quality.ORDER]
-    if not can_hq:
-        lines.append("")
-        lines.append("🔒 المستويات فوق 1080p تحتاج إذن من الأدمن.")
-    elif not settings.telegram_local_api:
+    if not settings.telegram_local_api:
         # The one failure mode that actually bites: the render succeeds and
         # then cannot be delivered. Say it before they pick, not after.
         lines.append("")
@@ -165,16 +177,12 @@ async def cb_quality_menu(cq: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("q:"))
 async def cb_quality_set(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
+    if not await _hq_only(cq):
+        return
     rec = await _require_job(cq)
     if not rec:
         return
     tier = quality.get(_arg(cq.data))
-
-    if tier.gated and not users.can_hq(cq.from_user.id):
-        await cq.answer(
-            f"🔒 «{tier.label}» متاح للأدمن والأشخاص المصرّح لهم فقط.\n"
-            f"اطلب من الأدمن منحك الجودة العالية.", show_alert=True)
-        return
 
     if tier.key == rec.quality:
         await cq.answer("هذه الجودة مطبّقة أصلاً.")
@@ -185,7 +193,8 @@ async def cb_quality_set(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
     users.set_quality(cq.from_user.id, tier.key)
     await cq.message.edit_reply_markup(
         reply_markup=result_keyboard(rec.id, rec.quality,
-                                     users.is_admin(cq.from_user.id)))
+                                     users.is_admin(cq.from_user.id),
+                                     users.can_hq(cq.from_user.id)))
 
     if rec.from_link:
         await cq.answer(f"🎚 {tier.label} — جارٍ إعادة التحميل بهذه الجودة…")
@@ -244,7 +253,8 @@ async def cb_back(cq: CallbackQuery) -> None:
         return
     await cq.message.edit_reply_markup(
         reply_markup=result_keyboard(rec.id, rec.quality,
-                                     users.is_admin(cq.from_user.id)))
+                                     users.is_admin(cq.from_user.id),
+                                     users.can_hq(cq.from_user.id)))
     await cq.answer()
 
 
@@ -346,7 +356,6 @@ async def cb_info(cq: CallbackQuery) -> None:
     p = rec.probe or {}
     dur = float(p.get("duration", 0) or 0)
     label = INTENSITY_AR.get(rec.intensity, rec.intensity)
-    tier = quality.get(rec.quality)
     lines = [
         "ℹ️ معلومات المعالجة",
         f"• المهمة: {rec.id}",
@@ -355,8 +364,13 @@ async def cb_info(cq: CallbackQuery) -> None:
         f"• المدة الأصلية: {dur:.1f} ثانية",
         f"• الترميز: {p.get('codec', '?')}",
         f"• الشدّة: {label}",
-        f"• الجودة: {tier.label} (CRF {tier.crf} · {tier.preset} · "
-        f"صوت {tier.audio_bitrate})",
+    ]
+    # Same rule as the caption: no tier talk for someone with no tier button.
+    if users.can_hq(cq.from_user.id):
+        tier = quality.get(rec.quality)
+        lines.append(f"• الجودة: {tier.label} (CRF {tier.crf} · {tier.preset} · "
+                     f"صوت {tier.audio_bitrate})")
+    lines += [
         f"• عدد النسخ: {rec.variant_count}",
         f"• آخر معالجة: {rec.last_render_seconds:.2f} ثانية",
         f"• تسريع عتادي: {settings.hw_accel}",
