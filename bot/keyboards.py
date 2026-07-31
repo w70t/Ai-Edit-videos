@@ -58,6 +58,35 @@ def confirm_forget_keyboard() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def confirm_keyboard(job_id: str) -> InlineKeyboardMarkup:
+    """
+    Shown *before* any editing happens, right after a video is received.
+
+    Nothing is rendered until one of these is tapped — the whole point is that
+    the admin picks the intensity per video instead of the bot silently
+    applying DEFAULT_INTENSITY.
+
+    Same layout language as `result_keyboard` so the two screens feel like one
+    panel: recommended preset on top, the three intensities under it.
+    """
+    kb = InlineKeyboardBuilder()
+
+    kb.row(
+        InlineKeyboardButton(text="♻️ وضع إعادة النشر (موصى به)",
+                             callback_data=f"go:{job_id}:repost"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="🟢 تعديل خفيف",  callback_data=f"go:{job_id}:light"),
+        InlineKeyboardButton(text="🟡 تعديل متوسط", callback_data=f"go:{job_id}:medium"),
+        InlineKeyboardButton(text="🔴 تعديل قوي",   callback_data=f"go:{job_id}:strong"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="⚙️ إعدادات مختلفة", callback_data=f"settings:{job_id}"),
+        InlineKeyboardButton(text="❌ إلغاء",          callback_data=f"cancel:{job_id}"),
+    )
+    return kb.as_markup()
+
+
 def result_keyboard(job_id: str) -> InlineKeyboardMarkup:
     """
     The main control panel shown *under every finished video*.

@@ -57,6 +57,9 @@ class Settings:
     # Running your own Bot API server lifts both limits to 2000 MB.
     telegram_local_api: bool = _bool("TELEGRAM_LOCAL_API", False)
     default_intensity: str = os.getenv("DEFAULT_INTENSITY", "repost").strip().lower()
+    # Ask which intensity to use before touching the video, instead of
+    # rendering the default straight away.
+    confirm_before_edit: bool = _bool("CONFIRM_BEFORE_EDIT", True)
 
     # --- Hardware ---
     hw_accel: str = os.getenv("HW_ACCEL", "auto").strip().lower()
