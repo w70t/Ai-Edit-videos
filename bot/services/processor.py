@@ -21,7 +21,9 @@ from ..utils.cleanup import remove_path
 from ..utils.ffmpeg import make_thumbnail, probe
 from .dedup import registry
 from .editor import edit_video, impact_label
-from .storage import JobRecord
+from .prefs import prefs
+from .queue import Job, JobQueue
+from .storage import JobRecord, store
 
 log = logging.getLogger(__name__)
 
@@ -148,8 +150,61 @@ async def render_and_send(
 
     # Only now that the render succeeded and was delivered do we remember the
     # source hash — a failed/partial job must not poison future inputs.
-    if settings.skip_duplicates and rec.source_hash:
+    if prefs.skip_duplicates and rec.source_hash:
         registry.remember(rec.source_hash, rec.origin)
 
     log.info("job %s rendered in %.2fs (%s) %dx%d",
              rec.id, rec.last_render_seconds, rec.intensity, width, height)
+
+
+async def submit_render(
+    bot: Bot,
+    queue: JobQueue,
+    rec: JobRecord,
+    status_chat_id: int,
+    status_message_id: int,
+    *,
+    drop_on_error: bool = False,
+    error_prefix: str = "❌ فشلت المعالجة",
+) -> None:
+    """
+    Hand a render to the queue, using one message the caller already owns for
+    every status update: the queue position, the failure text, and (inside
+    `render_and_send`) the progress line that is finally replaced by the video.
+
+    `drop_on_error` deletes the job and its temp dir on failure — right for a
+    first render, wrong for a re-render, where the source must survive so the
+    admin can try different settings.
+    """
+    # Once a render is queued the job is no longer "awaiting approval", whether
+    # it got here from the confirmation screen or straight from ingest with
+    # CONFIRM_BEFORE_EDIT=false.
+    rec.started = True
+
+    async def run() -> None:
+        await render_and_send(
+            bot, rec,
+            status_chat_id=status_chat_id,
+            status_message_id=status_message_id,
+        )
+
+    async def on_error(exc: Exception) -> None:
+        if drop_on_error:
+            remove_path(rec.work_dir)
+            store.drop(rec.id)
+        try:
+            await bot.edit_message_text(f"{error_prefix}: {exc}",
+                                        chat_id=status_chat_id,
+                                        message_id=status_message_id)
+        except Exception:
+            pass
+
+    pos = await queue.submit(
+        Job(id=f"{rec.id}-{int(time.time())}", coro=run, on_error=on_error))
+    if pos > 0:
+        try:
+            await bot.edit_message_text(
+                f"🕓 في الانتظار (الترتيب {pos + 1}). سيبدأ قريباً…",
+                chat_id=status_chat_id, message_id=status_message_id)
+        except Exception:
+            pass

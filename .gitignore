@@ -13,6 +13,7 @@ venv/
 saved/
 dedup.json
 dedup.json.tmp
+prefs.json
 *.mp4
 *.mkv
 *.webm

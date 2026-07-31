@@ -4,7 +4,9 @@ Inbound media handlers: links (Reels/TikTok) and direct video uploads.
 Both paths converge on the same pattern:
   1. create a job record (the store builds a private temp dir),
   2. acquire the source (yt-dlp download, or download-from-Telegram),
-  3. enqueue a render job so only N run at once on the Pi.
+  3. ASK the admin which intensity to apply — nothing is edited before that
+     answer (unless CONFIRM_BEFORE_EDIT=false),
+  4. enqueue a render job so only N run at once on the Pi.
 """
 
 from __future__ import annotations
@@ -17,12 +19,15 @@ from aiogram.types import Message
 
 from ..config import settings
 from ..filters import IsAdmin
+from ..keyboards import confirm_keyboard
 from ..services import downloader
 from ..services.dedup import hash_file, registry
-from ..services.processor import render_and_send
-from ..services.queue import Job, JobQueue
+from ..services.prefs import prefs
+from ..services.processor import submit_render
+from ..services.queue import JobQueue
 from ..services.storage import JobRecord, store
 from ..utils.cleanup import remove_path
+from ..utils.ffmpeg import probe
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +72,7 @@ async def _is_duplicate(rec: JobRecord, status_msg: Message) -> bool:
     the record (it is committed to the registry only after a successful render)
     and return False.
     """
-    if not settings.skip_duplicates or rec.source is None:
+    if not prefs.skip_duplicates or rec.source is None:
         return False
 
     # Hashing is blocking disk I/O — keep it off the event loop.
@@ -88,33 +93,61 @@ async def _is_duplicate(rec: JobRecord, status_msg: Message) -> bool:
     return False
 
 
-async def _enqueue_render(
+def _duration_ar(seconds: float) -> str:
+    """'٩٣ ثانية' reads badly for long clips — show m:ss past a minute."""
+    if seconds <= 0:
+        return "غير معروفة"
+    if seconds < 60:
+        return f"{seconds:.1f} ثانية"
+    return f"{int(seconds) // 60}:{int(seconds) % 60:02d} دقيقة"
+
+
+def _confirm_text(rec: JobRecord) -> str:
+    """The 'what did I just receive, and what should I do with it?' screen."""
+    p = rec.probe or {}
+    dur = float(p.get("duration", 0) or 0)
+    size_mb = rec.source.stat().st_size / (1024 * 1024) if rec.source else 0
+    lines = [
+        "🎬 وصل الفيديو — ولم أعدّل عليه شيئاً بعد.",
+        "",
+        f"• المصدر: {rec.origin[:60]}",
+        f"• المدة: {_duration_ar(dur)}",
+        f"• الأبعاد: {p.get('width', '?')}×{p.get('height', '?')}",
+        f"• الحجم: {size_mb:.1f} ميجابايت",
+        "",
+        "اختر شدّة التعديل من الأزرار بالأسفل 👇",
+        "♻️ إعادة النشر = الأقوى فعلياً ضد كشف التكرار "
+        "(تأطير + قص زمني + تغيير طبقة الصوت).",
+        "🔴 قوي · 🟡 متوسط · 🟢 خفيف (تجميلي فقط).",
+    ]
+    return "\n".join(lines)
+
+
+async def _ask_or_render(
     bot: Bot, queue: JobQueue, rec: JobRecord, status_msg: Message
 ) -> None:
-    """Submit the heavy render to the queue with proper error reporting."""
+    """
+    Hand the job over to the admin (default), or straight to the queue when
+    CONFIRM_BEFORE_EDIT=false.
 
-    async def run() -> None:
-        await render_and_send(
-            bot, rec,
-            status_chat_id=status_msg.chat.id,
-            status_message_id=status_msg.message_id,
-        )
+    The confirmation screen probes the source first — the numbers it shows are
+    the same ones the render will reuse, so this costs nothing extra.
+    """
+    if not prefs.confirm_before_edit:
+        await submit_render(bot, queue, rec, status_msg.chat.id,
+                            status_msg.message_id, drop_on_error=True)
+        return
 
-    async def on_error(exc: Exception) -> None:
-        remove_path(rec.work_dir)
-        store.drop(rec.id)
-        try:
-            await status_msg.edit_text(f"❌ فشلت المعالجة: {exc}")
-        except Exception:
-            pass
+    try:
+        rec.probe = await probe(str(rec.source))
+    except Exception as exc:      # a probe failure must not lose the video
+        log.warning("probe failed for %s: %s", rec.id, exc)
 
-    pos = await queue.submit(Job(id=rec.id, coro=run, on_error=on_error))
-    if pos > 0:
-        try:
-            await status_msg.edit_text(
-                f"🕓 في الانتظار (الترتيب {pos + 1}). سيبدأ قريباً…")
-        except Exception:
-            pass
+    # No parse_mode: rec.origin is a raw URL, and TikTok/Instagram links are
+    # full of _ and * — a Markdown parse error would leave the admin with a
+    # video sitting in temp and no buttons to act on it.
+    await status_msg.edit_text(_confirm_text(rec),
+                               reply_markup=confirm_keyboard(rec.id))
 
 
 # --------------------------------------------------------------------------- #
@@ -129,7 +162,7 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         rec.source = await downloader.download(
             url, rec.work_dir, settings.max_video_mb)
-        rec.apply_preset(settings.default_intensity)
+        rec.apply_preset(prefs.default_intensity)
     except Exception as exc:
         log.warning("download failed: %s", exc)
         remove_path(rec.work_dir)
@@ -142,7 +175,7 @@ async def handle_link(message: Message, bot: Bot, queue: JobQueue) -> None:
     if await _is_duplicate(rec, status):
         return
 
-    await _enqueue_render(bot, queue, rec, status)
+    await _ask_or_render(bot, queue, rec, status)
 
 
 # --------------------------------------------------------------------------- #
@@ -218,7 +251,7 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     try:
         await bot.download(media, destination=dest)
         rec.source = dest
-        rec.apply_preset(settings.default_intensity)
+        rec.apply_preset(prefs.default_intensity)
     except Exception as exc:
         log.warning("media download failed: %s", exc)
         remove_path(rec.work_dir)
@@ -238,4 +271,4 @@ async def handle_upload(message: Message, bot: Bot, queue: JobQueue) -> None:
     if await _is_duplicate(rec, status):
         return
 
-    await _enqueue_render(bot, queue, rec, status)
+    await _ask_or_render(bot, queue, rec, status)

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-import time
 from datetime import datetime
 
 from aiogram import Bot, F, Router
@@ -19,10 +18,11 @@ from aiogram.types import CallbackQuery, FSInputFile
 
 from ..config import settings
 from ..filters import IsAdmin
-from ..keyboards import result_keyboard, settings_keyboard
+from ..keyboards import confirm_keyboard, result_keyboard, settings_keyboard
 from ..services.editor import TOGGLEABLE, impact_label
-from ..services.processor import render_and_send
-from ..services.queue import Job, JobQueue
+from ..services.prefs import prefs
+from ..services.processor import submit_render
+from ..services.queue import JobQueue
 from ..services.storage import JobRecord, store
 from ..utils.cleanup import remove_path
 
@@ -65,22 +65,63 @@ async def _queue_rerender(cq: CallbackQuery, bot: Bot, queue: JobQueue,
                           rec: JobRecord, note: str) -> None:
     """Send a fresh status message and enqueue a re-render."""
     status = await bot.send_message(rec.chat_id, note)
+    # No drop_on_error: a failed re-render must leave the source in place so
+    # the admin can go back and try different settings.
+    await submit_render(bot, queue, rec, status.chat.id, status.message_id,
+                        error_prefix="❌ فشلت إعادة المعالجة")
 
-    async def run() -> None:
-        await render_and_send(
-            bot, rec,
-            status_chat_id=status.chat.id,
-            status_message_id=status.message_id,
-        )
 
-    async def on_error(exc: Exception) -> None:
-        try:
-            await status.edit_text(f"❌ فشلت إعادة المعالجة: {exc}")
-        except Exception:
-            pass
+async def _start_first_render(cq: CallbackQuery, bot: Bot, queue: JobQueue,
+                              rec: JobRecord, note: str) -> None:
+    """
+    Begin the *first* render of a job that has been waiting for approval.
 
-    await queue.submit(Job(id=f"{rec.id}-r{int(time.time())}", coro=run,
-                           on_error=on_error))
+    The confirmation message becomes the status message: editing it drops the
+    buttons (so the choice can't be made twice) and the render pipeline then
+    reuses that same message for progress, errors, and finally replaces it with
+    the video.
+    """
+    rec.started = True
+    try:
+        await cq.message.edit_text(note, reply_markup=None)
+    except Exception:
+        pass
+    await submit_render(bot, queue, rec, cq.message.chat.id,
+                        cq.message.message_id, drop_on_error=True)
+
+
+# --------------------------------------------------------------------------- #
+#  Confirmation screen — shown before anything is edited
+# --------------------------------------------------------------------------- #
+@router.callback_query(F.data.startswith("go:"))
+async def cb_go(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
+    """The admin approved an intensity — only now does FFmpeg get to run."""
+    rec = await _require_job(cq)
+    if not rec:
+        return
+    if rec.started:
+        await cq.answer("جارٍ العمل على هذه المهمة أصلاً…")
+        return
+    rec.apply_preset(_arg(cq.data) or prefs.default_intensity)
+    label = INTENSITY_AR.get(rec.intensity, rec.intensity)
+    await cq.answer(f"بدأ التعديل بشدّة {label}…")
+    await _start_first_render(cq, bot, queue, rec,
+                              f"⚙️ جارٍ تطبيق تعديل {label}…")
+
+
+@router.callback_query(F.data.startswith("cancel:"))
+async def cb_cancel(cq: CallbackQuery) -> None:
+    """Decline the video outright: no render, and the temp copy goes away."""
+    rec = store.drop(_job_id(cq.data))
+    if rec:
+        remove_path(rec.work_dir)
+    try:
+        await cq.message.edit_text(
+            "❌ تم الإلغاء — لم يُطبَّق أي تعديل، وحُذفت النسخة المؤقتة.",
+            reply_markup=None)
+    except Exception:
+        pass
+    await cq.answer("تم الإلغاء")
 
 
 # --------------------------------------------------------------------------- #
@@ -97,7 +138,7 @@ async def cb_edit(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
     label = INTENSITY_AR.get(rec.intensity, rec.intensity)
     await cq.answer(f"جارٍ إعادة المعالجة بشدّة {label}…")
     await _queue_rerender(cq, bot, queue, rec,
-                          f"⚙️ جارٍ تطبيق تعديل *{label}*…")
+                          f"⚙️ جارٍ تطبيق تعديل {label}…")
 
 
 # --------------------------------------------------------------------------- #
@@ -107,6 +148,15 @@ async def cb_edit(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
 async def cb_variant(cq: CallbackQuery, bot: Bot, queue: JobQueue) -> None:
     rec = await _require_job(cq)
     if not rec:
+        return
+    # This button doubles as "▶️ إعادة المعالجة الآن" in the settings sub-menu,
+    # which the admin can also reach from the confirmation screen. There, no
+    # render has happened yet — so it starts the first one instead of counting
+    # a variant of a video that doesn't exist.
+    if not rec.started:
+        await cq.answer("بدأ التعديل…")
+        await _start_first_render(cq, bot, queue, rec,
+                                  "⚙️ جارٍ تنفيذ التعديل بالإعدادات المختارة…")
         return
     rec.variant_count += 1
     await cq.answer("جارٍ إنشاء نسخة جديدة…")
@@ -152,7 +202,10 @@ async def cb_back(cq: CallbackQuery) -> None:
     rec = await _require_job(cq)
     if not rec:
         return
-    await cq.message.edit_reply_markup(reply_markup=result_keyboard(rec.id))
+    # "Back" has to return to whichever panel this sub-menu was opened from:
+    # the confirmation screen (nothing rendered yet) or the result panel.
+    panel = result_keyboard if rec.started else confirm_keyboard
+    await cq.message.edit_reply_markup(reply_markup=panel(rec.id))
     await cq.answer()
 
 

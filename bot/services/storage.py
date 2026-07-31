@@ -39,6 +39,9 @@ class JobRecord:
     variant_count: int = 0
     # What the last render actually did, in the user's words.
     edit_notes: list[str] = field(default_factory=list)
+    # False until the admin has approved an intensity for this job. Guards the
+    # confirmation screen against a double-tap queueing the same render twice.
+    started: bool = False
 
     def apply_preset(self, intensity: str) -> None:
         """Switch to a preset — sets both the intensity and its option set."""
