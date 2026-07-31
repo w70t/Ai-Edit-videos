@@ -19,6 +19,7 @@ from aiogram.types import BotCommand
 
 from .config import settings
 from .handlers import build_router
+from .services.prefs import prefs
 from .services.queue import JobQueue
 from .utils.cleanup import periodic_sweep
 from .utils.ffmpeg import (available_hwaccels, ffmpeg_available,
@@ -40,6 +41,11 @@ async def main() -> None:
 
     log.info("admin id: %s", settings.admin_id)
     log.info("work dir: %s | save dir: %s", settings.work_dir, settings.save_dir)
+    # Printed on every boot so a stale deployment is obvious in the logs: the
+    # old build has no such line at all.
+    log.info("prefs: ask-before-edit=%s | default=%s | skip-duplicates=%s (file: %s)",
+             prefs.confirm_before_edit, prefs.default_intensity,
+             prefs.skip_duplicates, settings.prefs_db)
     log.info("telegram limits: %d MB in / %d MB out%s",
              settings.max_incoming_mb, settings.max_outgoing_mb,
              " (local Bot API server)" if settings.telegram_local_api else "")
